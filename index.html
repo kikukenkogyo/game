@@ -179,7 +179,7 @@ addEventListener('keydown', e => {
   if(e.code === 'Space' && !keys['Space'] && state === 'play') trySpecial();
   if(e.code === 'KeyE' && !keys['KeyE'] && state === 'play') tryHammer();
   keys[e.code] = true;
-  if(e.code === 'KeyR' && state === 'gameover') toTitle();
+  if(e.code === 'KeyR' && (state === 'gameover' || state === 'ending')) toTitle();
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
 cv.addEventListener('mousemove', e => {
@@ -190,7 +190,7 @@ cv.addEventListener('mousemove', e => {
 cv.addEventListener('mousedown', e => {
   ac().resume && ac().resume();
   if(state === 'title'){ newGame(); return; }
-  if(state === 'gameover'){ toTitle(); return; }
+  if(state === 'gameover' || state === 'ending'){ toTitle(); return; }
   if(e.button === 0) beamHeld = true;
   if(e.button === 2) tryCrush();
 });
@@ -224,7 +224,7 @@ cv.addEventListener('touchstart', e => {
   touchMode = true;
   try{ ac().resume && ac().resume(); }catch(err){}
   if(state === 'title'){ newGame(); return; }
-  if(state === 'gameover'){ toTitle(); return; }
+  if(state === 'gameover' || state === 'ending'){ toTitle(); return; }
   for(const t of e.changedTouches){
     const pos = touchPos(t);
     const btn = hitButton(pos.x, pos.y);
@@ -281,6 +281,27 @@ let opFx = null;        // オペレーター（最終手段）
 let gWave = null;       // 大ハンマーの地震波
 let flashT = 0;
 let zoomCur = 1;
+// --- 新要素 ---
+let weather = 'sun';    // sun / rain / snow / storm
+let birds = [], poops = [], pickups = [];
+let sprayer = null;     // 助っ人散水職人
+let birdTimer = 0, sprayTimer = 0;
+let stageIntroT = 0, lightningT = 0, spookyT = 0;
+let rankSaved = false;
+const MAX_STAGE = 10;
+const LANDMARKS = [
+  { name: '東京タワー（風）',   w: 170, h: 300 },
+  { name: 'スカイツリー（風）', w: 150, h: 340 },
+  { name: '六本木ヒルズ（風）', w: 210, h: 280 },
+  { name: '日本武道館（風）',   w: 240, h: 185 },
+  { name: '東京都庁（風）',     w: 230, h: 300 },
+  { name: '国立競技場（風）',   w: 310, h: 150 },
+  { name: '雷門（風）',         w: 230, h: 175 },
+  { name: '通天閣（風）',       w: 150, h: 290 },
+  { name: '大阪城（風）',       w: 250, h: 250 },
+  { name: '国会議事堂（風）',   w: 330, h: 230 },
+];
+const WICON = { sun: '☀', rain: '☔', snow: '⛄', storm: '🌀' };
 
 function toTitle(){ state = 'title'; beamHeld = false; beamSoundOff(); spFx = null; opFx = null; gWave = null; flashT = 0; zoomCur = 1; }
 
@@ -292,14 +313,16 @@ function newGame(){
     facing: 1, turn: 1,
     tx: 400, ty: 300,
     pitch: 0, tread: 0,
-    beam: 100, beamLock: false,
-    sp: 0,
+    beamTime: 0,                  // 必殺発動後のビーム解放残り時間
+    sp: 0, ramCd: 0,
     guts: 100,                    // 漢気ゲージ（最終手段・初回は満タン）
     lv: 1, kills: 0, scl: 1,      // 強化レベル（監督を説得で成長）
+    armMul: 1,                    // アーム長倍率（ステージ8〜ロングアーム）
     jaw: 0.18, crushT: 0, crushCd: 0,
     inv: 0, smokeT: 0, heartT: 0
   };
   spFx = null; opFx = null;
+  rankSaved = false;
   startStage(1);
   state = 'play';
 }
@@ -307,22 +330,43 @@ function newGame(){
 function startStage(n){
   stage = n;
   buildings = []; sups = []; angerShots = []; parts = []; texts = []; bubbles = [];
+  birds = []; poops = []; pickups = []; sprayer = null;
   spFx = null; opFx = null; gWave = null; flashT = 0;
+  // 天候（ステージ1は晴れ、最終ステージは台風）
+  weather = n === 1 ? 'sun' : n === MAX_STAGE ? 'storm'
+          : pick(n >= 5 ? ['sun', 'rain', 'snow', 'storm'] : ['sun', 'rain', 'snow']);
   let x = 520;
-  const count = 4 + n * 2;
+  const count = 3 + Math.ceil(n * 0.9);
   for(let i = 0; i < count; i++){
     const w = 130 + Math.random() * 90;
-    const h = 110 + Math.random() * (140 + n * 30);
-    const hp = Math.round((w * h) / 1300) + n * 3;
+    const h = 110 + Math.random() * (120 + n * 16);
+    const hp = Math.round((w * h) / 1500) + n * 2;
     buildings.push({ x, w, h, hp, maxHp: hp, seed: Math.random() * 1000 | 0, destroyed: false, shakeT: 0 });
-    x += w + 180 + Math.random() * 120;
+    x += w + 170 + Math.random() * 110;
   }
-  worldEnd = x + 300;
+  // ステージボス：日本の名所（デフォルメ）
+  const lm = LANDMARKS[Math.min(n, MAX_STAGE) - 1];
+  x += 140;
+  const lhp = 45 + n * 20;
+  buildings.push({ x, w: lm.w, h: lm.h, hp: lhp, maxHp: lhp, seed: 7,
+                   destroyed: false, shakeT: 0, landmark: true, kind: Math.min(n, MAX_STAGE), name: lm.name });
+  x += lm.w;
+  worldEnd = x + 380;
   player.x = 150; player.y = GROUND; player.vx = 0; player.vy = 0;
   camX = 0;
   supTimer = 2.5;
+  birdTimer = rnd(3, 6);
+  sprayTimer = rnd(14, 24);
+  stageIntroT = 3.4;
   player.hp = Math.min(player.maxHp, player.hp + 25);
-  player.beam = 100;
+  // ステージ8以降はロングアーム仕様に乗り換え
+  const wasLong = player.armMul > 1;
+  player.armMul = n >= 8 ? 1.55 : 1;
+  if(n >= 8 && !wasLong){
+    addText(player.x, GROUND - 170, '✨ ロングアーム重機に乗り換えた！', '#ffe14d', true);
+    addText(player.x, GROUND - 140, '高いところまでアームが届くぞ！', '#fff');
+    heartsBurst(player.x, GROUND - 80, 14, 120);
+  }
 }
 
 // ---------- ユーティリティ ----------
@@ -403,7 +447,8 @@ function smoke(x, y, big){
 // ---------- アームIK（2関節） ----------
 function ik(p){
   const S = p.scl || 1;
-  const l1 = L1 * S, l2 = L2 * S;
+  const am = p.armMul || 1;          // ステージ8以降はロングアーム
+  const l1 = L1 * S * am, l2 = L2 * S * am;
   const sx = p.x + p.turn * 16 * S, sy = p.y - 64 * S;
   let dx = p.tx - sx, dy = p.ty - sy;
   let d = Math.hypot(dx, dy) || 1;
@@ -421,30 +466,34 @@ function ik(p){
 
 // ---------- アクション ----------
 function tryCrush(){
+  // 油圧圧砕機で噛む（通常攻撃）
   const p = player;
   if(state !== 'play' || p.crushCd > 0 || opFx) return;
   const S = p.scl || 1, MUL = LV_MUL[p.lv - 1] || 1;
-  p.crushCd = 0.6; p.crushT = 0.3;
+  p.crushCd = 0.42; p.crushT = 0.26;
   const t = ik(p);
   const jx = t.tx + Math.cos(t.a2) * 46 * S, jy = t.ty + Math.sin(t.a2) * 46 * S;
   sfxCrush();
-  shake = Math.max(shake, 7 + (S - 1) * 8);
-  dust(jx, jy, 8, '#cbbfae', 80);
+  shake = Math.max(shake, 5 + (S - 1) * 8);
+  dust(jx, jy, 6, '#cbbfae', 70);
   let hitAny = false;
   for(const b of buildings){
     if(b.destroyed) continue;
     if(circleRect(jx, jy, 58 * S, b.x, GROUND - b.h, b.w, b.h)){
-      damageBuilding(b, 13 * MUL, jx, jy); hitAny = true;
+      damageBuilding(b, 9 * MUL, jx, jy); hitAny = true;
     }
   }
   for(const s of sups){
     if(s.state === 'soothed' || s.state === 'smacked') continue;
     if(Math.hypot(s.x - jx, (s.y - 34 * s.scale) - jy) < 64 * S){
-      s.hp -= 10 * MUL; s.flinch = 0.25; hitAny = true;
+      s.hp -= 8 * MUL; s.flinch = 0.25; hitAny = true;
       sparks(s.x, s.y - 40, 6, '#ffd24d');
     }
   }
-  if(hitAny){ addSp(6); rubble(jx, jy, 6); heartsBurst(jx, jy, 3, 70); }
+  for(const bd of birds){
+    if(Math.hypot(bd.x - jx, bd.y - jy) < 60 * S){ bd.hp = 0; hitAny = true; }
+  }
+  if(hitAny){ addSp(5); rubble(jx, jy, 5); heartsBurst(jx, jy, 3, 70); }
 }
 
 function trySpecial(){
@@ -452,6 +501,7 @@ function trySpecial(){
   if(p.sp < 100 || spFx || opFx) return;
   p.sp = 0;
   spFx = { t: 0, x: p.x, y: p.y - 50, r: 0 };
+  p.beamTime = 8.5;            // 必殺発動中＋発動後はハートビーム解放！
   for(const b of buildings) b._sp = false;
   for(const s of sups) s._sp = false;
   sfxSpecial();
@@ -535,21 +585,33 @@ function update(dt, raw){
   if(Math.abs(p.vx) < 4 && mv === 0) p.vx = 0;
   p.pitch = lerp(p.pitch, clamp((targetV - p.vx) * 0.00045 + p.vx * 0.00012, -0.07, 0.07), Math.min(1, dt * 5));
   if(!opFx && (keys['ArrowUp'] || keys['KeyW']) && p.onGround){
-    p.vy = -440; p.onGround = false;
-    dust(p.x, GROUND, 8, '#b9aa98', 90);
+    p.vy = -560; p.onGround = false;
+    dust(p.x, p.y, 8, '#b9aa98', 90);
     sfxClank();
   }
   p.vy += 1150 * dt;
+  const prevY = p.y;
   p.x += p.vx * dt; p.y += p.vy * dt;
   p.x = clamp(p.x, 60, worldEnd - 60);
-  if(p.y >= GROUND){
-    if(!p.onGround && p.vy > 350){ dust(p.x, GROUND, 8); shake = Math.max(shake, 4); sfxClank(); }
-    p.y = GROUND; p.vy = 0; p.onGround = true;
+  // 着地判定（地面＋ビルの屋上はワンウェイ足場：低めのビルに乗れる！）
+  let gy = GROUND;
+  for(const b of buildings){
+    if(b.destroyed) continue;
+    const top = GROUND - b.h;
+    if(p.x > b.x + 10 && p.x < b.x + b.w - 10 && prevY <= top + 4 && p.vy >= 0){
+      gy = Math.min(gy, top);
+    }
+  }
+  if(p.y >= gy && p.vy >= 0){
+    if(!p.onGround && p.vy > 350){ dust(p.x, gy, 8); shake = Math.max(shake, 4); sfxClank(); }
+    p.y = gy; p.vy = 0; p.onGround = true;
+  }else if(p.y < gy - 0.5){
+    p.onGround = false;
   }
   if(p.inv > 0) p.inv -= dt;
   p.tread += p.vx * dt;
   if(Math.abs(p.vx) > 60 && p.onGround && Math.random() < dt * 14)
-    dust(p.x - Math.sign(p.vx) * 46, GROUND, 1, '#c4b6a0', 40);
+    dust(p.x - Math.sign(p.vx) * 46, p.y, 1, '#c4b6a0', 40);
   p.smokeT -= dt;
   if(p.smokeT <= 0){
     p.smokeT = Math.abs(p.vx) > 50 ? 0.12 : 0.4;
@@ -563,6 +625,26 @@ function update(dt, raw){
   }
   // 漢気ゲージ（時間でじわじわ回復）
   if(state === 'play' && !opFx) p.guts = clamp(p.guts + 2.6 * dt, 0, 100);
+  // 台風の強風（空中で流される）
+  if(weather === 'storm' && !p.onGround) p.vx += Math.sin(tGlobal * 0.6) * 220 * dt;
+
+  // --- 体当たり（スピードに乗ってビルに突っ込む） ---
+  if(p.ramCd > 0) p.ramCd -= dt;
+  if(Math.abs(p.vx) > 140 && p.ramCd <= 0 && state === 'play'){
+    for(const b of buildings){
+      if(b.destroyed) continue;
+      if(p.y <= GROUND - b.h + 12) continue;   // 屋上に乗っている時は壊さない
+      if(p.x + 50 * S > b.x && p.x - 50 * S < b.x + b.w){
+        p.ramCd = 0.28;
+        const hx2 = clamp(p.x + Math.sign(p.vx) * 50 * S, b.x, b.x + b.w);
+        damageBuilding(b, 6 * MUL, hx2, GROUND - rnd(20, 60));
+        shake = Math.max(shake, 5);
+        p.vx *= 0.8;
+        addSp(3);
+        break;
+      }
+    }
+  }
 
   // --- 旋回体の向き ---
   const mwx = mouseX + camX, mwy = mouseY;
@@ -575,16 +657,18 @@ function update(dt, raw){
   const t = ik(p);
   const muzX = t.tx + Math.cos(t.a2) * 50 * S, muzY = t.ty + Math.sin(t.a2) * 50 * S;
 
-  // --- ハートビーム ---
+  // --- 通常攻撃：押しっぱなしで圧砕機ガブガブ ---
+  if(beamHeld && state === 'play' && !opFx && p.beamTime <= 0) tryCrush();
+
+  // --- ハートビーム（必殺発動中のみ解放） ---
   beamRay = null;
-  const firing = beamHeld && state === 'play' && !p.beamLock && p.beam > 0 && !spFx && !opFx;
+  if(p.beamTime > 0) p.beamTime -= raw;
+  const firing = beamHeld && state === 'play' && p.beamTime > 0 && !opFx && !(spFx && spFx.t < 0.9);
   if(firing){
-    p.beam = Math.max(0, p.beam - 36 * dt);
-    if(p.beam <= 0) p.beamLock = true;
     beamSoundOn();
     const ca = Math.cos(t.a2), sa = Math.sin(t.a2);
     let endX = muzX, endY = muzY, hitB = null, hitS = null;
-    const MAXLEN = 540 * S;
+    const MAXLEN = 540 * S * (p.armMul || 1);
     outer:
     for(let s = 0; s <= MAXLEN; s += 7){
       endX = muzX + ca * s; endY = muzY + sa * s;
@@ -600,21 +684,24 @@ function update(dt, raw){
     }
     beamRay = { x1: muzX, y1: muzY, x2: endX, y2: endY };
     if(hitB){
-      damageBuilding(hitB, 15 * MUL * dt, endX, endY, true);
-      addSp(9 * dt);
+      damageBuilding(hitB, 32 * MUL * dt, endX, endY, true);
       if(Math.random() < dt * 45) heartsBurst(endX, endY, 2, 80);
       if(Math.random() < dt * 10) rubble(endX, endY, 1);
     }else if(hitS){
-      hitS.hp -= 24 * MUL * dt; hitS.flinch = 0.1;
-      addSp(11 * dt);
+      hitS.hp -= 45 * MUL * dt; hitS.flinch = 0.1;
       if(Math.random() < dt * 50) heartsBurst(endX, endY - 20, 2, 70);
     }else if(endY > GROUND){
       if(Math.random() < dt * 12) dust(endX, GROUND, 1, '#cbbfae', 30);
     }
+    // ビームは鳥も癒す
+    for(const bd of birds){
+      const ddx = bd.x - muzX, ddy = bd.y - muzY;
+      const proj = ddx * Math.cos(t.a2) + ddy * Math.sin(t.a2);
+      if(proj > 0 && proj < 560 * S &&
+         Math.abs(-ddx * Math.sin(t.a2) + ddy * Math.cos(t.a2)) < 22) bd.hp = 0;
+    }
   }else{
     beamSoundOff();
-    p.beam = Math.min(100, p.beam + 30 * dt);
-    if(p.beamLock && p.beam > 25) p.beamLock = false;
   }
 
   // --- ニブラ開閉 ---
@@ -635,7 +722,7 @@ function update(dt, raw){
       const bcx = b.x + b.w/2;
       if(Math.abs(bcx - spFx.x) < r){
         b._sp = true;
-        damageBuilding(b, 30 + stage * 2, bcx, GROUND - b.h / 2);
+        damageBuilding(b, 12 + stage, bcx, GROUND - b.h / 2);
       }
     }
     for(const s of sups){
@@ -683,9 +770,9 @@ function update(dt, raw){
   // --- 監督（元請けの怒り） ---
   if(state === 'play'){
     supTimer -= dt;
-    const maxSups = 2 + Math.min(4, stage);
+    const maxSups = Math.min(6, 1 + Math.ceil(stage * 0.6));
     if(supTimer <= 0 && sups.filter(s => s.state === 'walk' || s.state === 'throw' || s.state === 'yell').length < maxSups){
-      supTimer = rnd(2.8, 5.5) / (1 + stage * 0.13);
+      supTimer = rnd(3.2, 6) / (1 + stage * 0.12);
       spawnSup();
     }
   }
@@ -763,9 +850,17 @@ function update(dt, raw){
       }
       if(s.stateT > 0.8){ s.state = 'walk'; s.yelled = false; s.atkCd = rnd(1.8, 3) / (1 + stage * 0.08); }
     }
-    if(p.inv <= 0 && adx < 42 * S && Math.abs(p.y - s.y) < 60){
-      hurtPlayer(6);
-      s.x -= s.face * 30;
+    if(adx < 42 * S && Math.abs(p.y - s.y) < 60){
+      if(Math.abs(p.vx) > 140){
+        // 体当たり！スピードに乗っていれば吹き飛ばす
+        s.hp -= 6 * MUL; s.flinch = 0.2;
+        s.x += Math.sign(p.vx) * 46;
+        sparks(s.x, s.y - 40, 6, '#ffd24d');
+        addSp(3);
+      }else if(p.inv <= 0){
+        hurtPlayer(6);
+        s.x -= s.face * 30;
+      }
     }
   }
 
@@ -784,12 +879,124 @@ function update(dt, raw){
     if(dead) angerShots.splice(i, 1);
   }
 
+  // --- カラスの襲来（ステージ3以降） ---
+  if(state === 'play' && stage >= 3){
+    birdTimer -= dt;
+    const maxBirds = Math.min(4, Math.floor((stage - 1) / 2));
+    if(birdTimer <= 0 && birds.length < maxBirds){
+      birdTimer = rnd(3.5, 7) / (1 + stage * 0.08);
+      const side = Math.random() < 0.5 ? -1 : 1;
+      birds.push({ x: side === -1 ? camX - 40 : camX + W + 40, y: rnd(50, 170),
+                   vx: -side * (120 + stage * 10), t: rnd(0, 6), hp: 2, poopCd: rnd(0.8, 2) });
+    }
+  }
+  for(let i = birds.length - 1; i >= 0; i--){
+    const bd = birds[i];
+    bd.t += dt;
+    bd.x += bd.vx * dt * (weather === 'storm' ? 1.35 : 1);
+    bd.y += Math.sin(bd.t * 3) * 24 * dt;
+    bd.poopCd -= dt;
+    if(bd.poopCd <= 0 && Math.abs(bd.x - p.x) < 170){
+      bd.poopCd = rnd(1.6, 3);
+      poops.push({ x: bd.x, y: bd.y + 10, vx: rnd(-15, 15), vy: 60 });
+    }
+    if(bd.hp <= 0){
+      addScore(100, bd.x, bd.y);
+      heartsBurst(bd.x, bd.y, 5, 70);
+      addText(bd.x, bd.y - 20, 'カーッ！？', '#fff');
+      birds.splice(i, 1);
+      continue;
+    }
+    if(Math.abs(bd.x - p.x) < 50 * S && bd.y > p.y - 110 * S && bd.y < p.y) bd.hp = 0;  // 機体に激突
+    if(bd.x < camX - 260 || bd.x > camX + W + 260) birds.splice(i, 1);
+  }
+  // フン爆弾
+  for(let i = poops.length - 1; i >= 0; i--){
+    const q = poops[i];
+    q.vy += 500 * dt; q.x += q.vx * dt; q.y += q.vy * dt;
+    let dead = false;
+    if(q.y > GROUND){ dead = true; dust(q.x, GROUND, 2, '#e8e4d8', 30); }
+    if(!dead && p.inv <= 0 && !opFx &&
+       q.x > p.x - 40 * S && q.x < p.x + 40 * S && q.y > p.y - 90 * S && q.y < p.y){
+      hurtPlayer(6); dead = true;
+      addText(p.x, p.y - 115, 'ふんっ！？', '#fff');
+    }
+    if(dead) poops.splice(i, 1);
+  }
+
+  // --- お宝（捨て猫・人骨・お札） ---
+  for(let i = pickups.length - 1; i >= 0; i--){
+    const q = pickups[i];
+    if(!q.grounded){
+      q.vy += 700 * dt; q.x += q.vx * dt; q.y += q.vy * dt;
+      if(q.y >= GROUND){ q.y = GROUND; q.grounded = true; }
+    }
+    q.life -= dt;
+    if(q.life <= 0){ pickups.splice(i, 1); continue; }
+    if(Math.abs(q.x - p.x) < 55 * S && q.y > p.y - 70){
+      collectPickup(q);
+      pickups.splice(i, 1);
+    }
+  }
+
+  // --- 助っ人散水職人 ---
+  if(state === 'play' && !sprayer){
+    sprayTimer -= dt;
+    if(sprayTimer <= 0){
+      sprayTimer = rnd(20, 32);
+      const angry0 = sups.filter(s => s.state === 'walk' || s.state === 'throw' || s.state === 'yell');
+      if(angry0.length >= 1){
+        const dir = Math.random() < 0.5 ? 1 : -1;
+        sprayer = { x: dir === 1 ? camX - 30 : camX + W + 30, dir,
+                    state: 'in', t: 0, face: dir, aimX: 0 };
+        addBubble(clamp(sprayer.x, camX + 60, camX + W - 60), GROUND - 90, '散水入りまーす！');
+      }
+    }
+  }
+  if(sprayer){
+    const sw = sprayer;
+    sw.t += dt;
+    const angry = sups.filter(s => s.state === 'walk' || s.state === 'throw' || s.state === 'yell');
+    if(sw.state === 'in'){
+      sw.x += sw.dir * 160 * dt;
+      sw.face = sw.dir;
+      const tx2 = p.x - sw.dir * 240;
+      if((sw.dir === 1 && sw.x >= tx2) || (sw.dir === -1 && sw.x <= tx2) || sw.t > 5){
+        sw.state = 'spray'; sw.t = 0;
+      }
+    }else if(sw.state === 'spray'){
+      let tgt = null, bd2 = 1e9;
+      for(const s of angry){ const d = Math.abs(s.x - sw.x); if(d < bd2){ bd2 = d; tgt = s; } }
+      sw.aimX = tgt ? tgt.x : sw.x + sw.face * 250;
+      sw.face = Math.sign(sw.aimX - sw.x) || 1;
+      // 放水（消防用ホース）
+      for(let k = 0; k < 3; k++){
+        const dist2 = sw.aimX - sw.x;
+        parts.push({ type: 'water', x: sw.x + sw.face * 16, y: GROUND - 42,
+          vx: dist2 * rnd(0.85, 1.15), vy: -Math.abs(dist2) * rnd(0.5, 0.7) - 60,
+          size: rnd(3, 6), life: rnd(0.7, 1.0), maxLife: 1.0, col: '#58b8f0' });
+      }
+      for(const s of angry){
+        if(Math.abs(s.x - sw.aimX) < 75){
+          s.hp -= 10 * dt; s.flinch = 0.1;
+          s.x += sw.face * 26 * dt;
+          if(Math.random() < dt * 5) addText(s.x, s.y - 95, 'びしょ濡れ！', '#58b8f0');
+        }
+      }
+      if(sw.t > 5.5){ sw.state = 'out'; sw.t = 0; addBubble(sw.x, GROUND - 90, 'また呼んでや〜'); }
+    }else{
+      sw.x -= sw.dir * 180 * dt;
+      sw.face = -sw.dir;
+      if(sw.t > 6 || sw.x < camX - 70 || sw.x > camX + W + 70) sprayer = null;
+    }
+  }
+
   // --- パーティクル ---
   for(let i = parts.length - 1; i >= 0; i--){
     const q = parts[i];
     q.life -= dt;
     if(q.life <= 0){ parts.splice(i, 1); continue; }
-    if(q.type === 'rock'){
+    if(q.type === 'rock' || q.type === 'cap'){
       q.vy += 900 * dt; q.x += q.vx * dt; q.y += q.vy * dt; q.rot += q.vr * dt;
       if(q.y > GROUND){ q.y = GROUND; q.vy *= -0.4; q.vx *= 0.6; }
     }else if(q.type === 'dust'){
@@ -803,6 +1010,9 @@ function update(dt, raw){
       q.x += q.vx * dt; q.y += q.vy * dt; q.size += 10 * dt;
     }else if(q.type === 'star'){
       q.x += q.vx * dt; q.y += q.vy * dt; q.rot += (q.vr || 4) * dt;
+    }else if(q.type === 'water'){
+      q.vy += 700 * dt; q.x += q.vx * dt; q.y += q.vy * dt;
+      if(q.y > GROUND){ q.y = GROUND; q.life = Math.min(q.life, 0.06); }
     }else{
       q.x += q.vx * dt; q.y += q.vy * dt; q.vy += 500 * dt;
     }
@@ -820,13 +1030,26 @@ function update(dt, raw){
   // --- クリア判定 ---
   if(state === 'play' && buildings.every(b => b.destroyed)){
     state = 'clear'; stateTimer = 2.6; sfxClear();
-    beamHeld = false; beamSoundOff();
+    beamSoundOff();
     for(let k = 0; k < 14; k++) heartFall(camX + rnd(0, W), -rnd(0, 120));
   }
   if(state === 'clear'){
     stateTimer -= dt;
-    if(stateTimer <= 0){ startStage(stage + 1); state = 'play'; }
+    if(stateTimer <= 0){
+      if(stage >= MAX_STAGE){
+        state = 'ending';
+        beamHeld = false; beamSoundOff();
+        saveRankEntry();
+      }else{
+        startStage(stage + 1); state = 'play';
+      }
+    }
   }
+  // 演出タイマー類
+  if(stageIntroT > 0) stageIntroT -= raw;
+  if(spookyT > 0) spookyT -= raw;
+  if(lightningT > 0) lightningT -= raw;
+  if(weather === 'storm' && Math.random() < raw * 0.12) lightningT = 0.14;
 }
 
 // ---------- オペレーター更新 ----------
@@ -891,6 +1114,13 @@ function updateOp(raw){
       gWave = { x: ix, r: 60, t: 0 };
       if(player.onGround){ player.vy = -300; player.onGround = false; }
       addText(ix, GROUND - 120, 'ドゴォォォォン！！！', '#fff', true);
+      // 衝撃でタオルが吹っ飛ぶ→スキンヘッド露出！
+      o.capOff = true;
+      parts.push({ type: 'cap', x: o.x, y: o.y - 80,
+        vx: -o.face * rnd(80, 140), vy: rnd(-420, -330),
+        rot: 0, vr: rnd(-9, 9), size: 11,
+        life: 2.4, maxLife: 2.4, col: '#f8f8f4' });
+      addText(o.x, GROUND - 160, '（タオルが吹っ飛んだ）', '#fff');
     }
     if(o.t > 0.6){ o.phase = 'back'; o.t = 0; }
   }else if(o.phase === 'back'){
@@ -919,6 +1149,58 @@ function smackSup(s, dir){
   addKill();
 }
 
+// ---------- お宝（捨て猫・人骨・お札） ----------
+function spawnPickup(x, y){
+  const r = Math.random();
+  const type = r < 0.5 ? 'cat' : r < 0.82 ? 'bone' : 'fuda';
+  pickups.push({ type, x, y, vx: rnd(-40, 40), vy: -180, life: 9, grounded: false });
+}
+function collectPickup(q){
+  if(q.type === 'cat'){
+    player.hp = Math.min(player.maxHp, player.hp + 15);
+    addScore(300, q.x, q.y - 40);
+    addText(q.x, q.y - 70, '捨て猫を保護した！にゃ〜💗', PINK, true);
+    heartsBurst(q.x, q.y - 30, 10, 90);
+    sfxSoothe();
+  }else if(q.type === 'bone'){
+    addScore(800, q.x, q.y - 40);
+    addText(q.x, q.y - 70, '人の骨！？…出土品として届けた', '#fff', true);
+    stars(q.x, q.y - 30, 8);
+    sfxClank();
+  }else{
+    addScore(1500, q.x, q.y - 40);
+    addText(q.x, q.y - 70, '古いお札…なにかついてきた…？', '#c8b8e8', true);
+    spookyT = 1.0;
+    try{
+      const a = ac(), t = a.currentTime;
+      const o = a.createOscillator(), g = a.createGain();
+      o.type = 'sine'; o.frequency.setValueAtTime(220, t);
+      o.frequency.exponentialRampToValueAtTime(60, t + 0.8);
+      env(g, t, 0.12, 0.85); o.connect(g).connect(a.destination);
+      o.start(t); o.stop(t + 0.9);
+    }catch(e){}
+  }
+}
+
+// ---------- ランキング ----------
+function loadRank(){
+  try{ return JSON.parse(localStorage.getItem('kikukenRank')) || []; }catch(e){ return []; }
+}
+function saveRankEntry(){
+  if(rankSaved || score <= 0) return;
+  rankSaved = true;
+  let r = loadRank();
+  if(r.length < 5 || score > r[r.length - 1].score){
+    let name = '';
+    try{ name = prompt('🏆 ランクイン！名前を入力してください：', '解体王') || ''; }catch(e){}
+    name = (name.trim() || '名無しの解体王').slice(0, 10);
+    r.push({ name, score, stage });
+    r.sort((a, b) => b.score - a.score);
+    r = r.slice(0, 5);
+    localStorage.setItem('kikukenRank', JSON.stringify(r));
+  }
+}
+
 // ---------- 重機パワーアップ ----------
 function addKill(){
   const p = player;
@@ -941,8 +1223,8 @@ function levelUp(){
   addText(p.x, p.y - 118, '重機 LV' + p.lv + '：巨大化＆火力アップ！', '#fff');
 }
 
-const YELLS = ['工期どうなっとんじゃ！', '安全帯せんかい！', '電話出ろ！', '図面と違うやろ！',
-               '近隣から苦情や！', '朝礼遅刻すんな！', '養生やり直し！', '報告書まだか！'];
+const YELLS = ['報告書よこせー！', '静かに仕事しろー！', '言うこときけー！', 'ちゃんとしろー！',
+               '朝礼出ろー！', 'ヘルメットかぶれー！', '片付けろー！', '早よやれー！'];
 function pick(arr){ return arr[Math.random() * arr.length | 0]; }
 function easeOut(t){ return 1 - Math.pow(1 - t, 3); }
 
@@ -975,6 +1257,7 @@ function hurtPlayer(dmg){
     sfxBoom(true);
     rubble(player.x, player.y - 30, 24);
     dust(player.x, player.y - 20, 16, '#999');
+    saveRankEntry();
   }
 }
 
@@ -984,15 +1267,24 @@ function damageBuilding(b, dmg, hx, hy, quiet){
   if(b.hp <= 0 && !b.destroyed){
     b.destroyed = true;
     sfxBoom(true);
-    shake = Math.max(shake, 12);
+    shake = Math.max(shake, b.landmark ? 18 : 12);
     const bcx = b.x + b.w/2;
-    rubble(bcx, GROUND - b.h/2, 26);
-    heartsBurst(bcx, GROUND - b.h/2, 10, 150);
-    for(let k = 0; k < 8; k++) dust(b.x + rnd(0, b.w), GROUND - rnd(0, b.h), 4, '#c9bcab', 110);
-    const bonus = 500 + Math.round(b.h) * 2;
-    addScore(bonus, bcx, GROUND - b.h - 20);
-    addText(bcx, GROUND - b.h - 50, '解体完了！', PINK, true);
-    addSp(14);
+    rubble(bcx, GROUND - b.h/2, b.landmark ? 40 : 26);
+    heartsBurst(bcx, GROUND - b.h/2, b.landmark ? 18 : 10, 150);
+    for(let k = 0; k < (b.landmark ? 14 : 8); k++) dust(b.x + rnd(0, b.w), GROUND - rnd(0, b.h), 4, '#c9bcab', 110);
+    if(b.landmark){
+      const bonus = 2000 + stage * 300;
+      addScore(bonus, bcx, GROUND - b.h - 20);
+      addText(bcx, GROUND - b.h - 56, b.name + '、解体完了！！', '#ffe14d', true);
+      spawnPickup(bcx, GROUND - b.h / 2);   // 名所からは必ずお宝
+      addSp(20);
+    }else{
+      const bonus = 500 + Math.round(b.h) * 2;
+      addScore(bonus, bcx, GROUND - b.h - 20);
+      addText(bcx, GROUND - b.h - 50, '解体完了！', PINK, true);
+      if(Math.random() < 0.3) spawnPickup(bcx, GROUND - b.h / 2);
+      addSp(14);
+    }
   }
 }
 
@@ -1001,9 +1293,22 @@ function draw(){
   cx.save();
   cx.clearRect(0, 0, W, H);
 
+  // 天候で空の色を変える
+  const SKYS = {
+    sun:   ['#7ec8ee', '#cfeaf7', '#e8f4f8'],
+    rain:  ['#8aa0b8', '#b8c8d4', '#ccd8e0'],
+    snow:  ['#a8b8c8', '#d8e2ec', '#eef2f6'],
+    storm: ['#4a5468', '#76808f', '#9aa4b4'],
+  };
+  const sc = (state === 'title') ? SKYS.sun : (SKYS[weather] || SKYS.sun);
   const sky = cx.createLinearGradient(0, 0, 0, H);
-  sky.addColorStop(0, '#7ec8ee'); sky.addColorStop(0.7, '#cfeaf7'); sky.addColorStop(1, '#e8f4f8');
+  sky.addColorStop(0, sc[0]); sky.addColorStop(0.7, sc[1]); sky.addColorStop(1, sc[2]);
   cx.fillStyle = sky; cx.fillRect(0, 0, W, H);
+  // 雷（台風）
+  if(lightningT > 0 && state !== 'title'){
+    cx.fillStyle = 'rgba(255,255,240,' + Math.min(0.55, lightningT * 4) + ')';
+    cx.fillRect(0, 0, W, H);
+  }
 
   const sx = (Math.random()*2-1) * shake, sy = (Math.random()*2-1) * shake;
   cx.translate(sx, sy);
@@ -1071,7 +1376,11 @@ function draw(){
   }
 
   for(const b of buildings) drawBuilding(b);
+  for(const q of pickups) drawPickup(q);
   for(const s of sups) drawSup(s);
+  if(sprayer) drawSprayer(sprayer);
+  for(const bd of birds) drawBird(bd);
+  for(const q of poops) drawPoop(q);
 
   if(beamRay) drawBeam(beamRay);
 
@@ -1109,6 +1418,17 @@ function draw(){
       cx.fillStyle = q.col;
       cx.fillRect(-q.size/2, -q.size/2, q.size, q.size * 0.8);
       cx.restore();
+    }else if(q.type === 'cap'){
+      // 吹っ飛んだ白タオル帽子
+      cx.save(); cx.translate(q.x, q.y); cx.rotate(q.rot);
+      cx.globalAlpha = Math.min(1, a * 2);
+      cx.fillStyle = q.col;
+      cx.beginPath(); cx.arc(0, 0, q.size, Math.PI, 0); cx.fill();
+      cx.beginPath(); cx.ellipse(0, 0, q.size, q.size * 0.32, 0, 0, 7); cx.fill();
+      cx.strokeStyle = '#d4d4cc'; cx.lineWidth = 1.2;
+      cx.beginPath(); cx.ellipse(0, 0, q.size, q.size * 0.32, 0, 0, 7); cx.stroke();
+      cx.globalAlpha = 1;
+      cx.restore();
     }else if(q.type === 'heart' || q.type === 'heartfall'){
       cx.globalAlpha = a;
       heart(q.x, q.y, q.size * 0.6, q.col);
@@ -1121,6 +1441,10 @@ function draw(){
       cx.moveTo(0, -q.size); cx.lineTo(0, q.size);
       cx.stroke();
       cx.globalAlpha = 1; cx.restore();
+    }else if(q.type === 'water'){
+      cx.fillStyle = q.col; cx.globalAlpha = a * 0.75;
+      cx.beginPath(); cx.arc(q.x, q.y, q.size, 0, 7); cx.fill();
+      cx.globalAlpha = 1;
     }else{
       cx.fillStyle = q.col; cx.globalAlpha = a;
       cx.fillRect(q.x - q.size/2, q.y - q.size/2, q.size, q.size);
@@ -1145,6 +1469,12 @@ function draw(){
   cx.restore(); // camera
   if(zoomed) cx.restore(); // zoom
 
+  drawWeatherFx();
+  if(spookyT > 0){
+    cx.fillStyle = 'rgba(40,20,70,' + (spookyT * 0.4) + ')';
+    cx.fillRect(0, 0, W, H);
+  }
+
   if(spFx) drawSpecialScreen();
   if(opFx) drawOpCutin();
   if(flashT > 0){
@@ -1155,18 +1485,72 @@ function draw(){
   drawHUD();
   drawCinema();
 
-  if(state === 'clear') banner('STAGE ' + stage + ' クリア！', '次の現場へ移動中…');
+  // ステージ開始の目標表示
+  if(stageIntroT > 0 && state === 'play'){
+    const a = clamp(Math.min(stageIntroT * 2, (3.4 - stageIntroT) * 3), 0, 1);
+    cx.globalAlpha = a;
+    cx.fillStyle = 'rgba(0,0,0,.55)';
+    roundRect(W/2 - 240, 56, 480, 66, 12); cx.fill();
+    cx.textAlign = 'center';
+    cx.fillStyle = '#fff'; cx.font = 'bold 20px ' + FONT;
+    cx.fillText('STAGE ' + stage + ' ／ 天気 ' + WICON[weather], W/2, 84);
+    const lm = buildings.find(b => b.landmark);
+    cx.fillStyle = '#ffe14d'; cx.font = 'bold 16px ' + FONT;
+    cx.fillText('目標：' + (lm ? lm.name : '全ビル') + ' を解体せよ！', W/2, 110);
+    cx.globalAlpha = 1;
+  }
+  if(state === 'clear') banner('STAGE ' + stage + ' クリア！', stage >= MAX_STAGE ? '……これで全現場、完工！' : '次の現場へ移動中…');
   if(state === 'gameover'){
-    cx.fillStyle = 'rgba(40,20,40,.6)'; cx.fillRect(0, 0, W, H);
+    cx.fillStyle = 'rgba(40,20,40,.65)'; cx.fillRect(0, 0, W, H);
     cx.textAlign = 'center';
     cx.fillStyle = PINK;
-    cx.font = 'bold 48px ' + FONT;
-    cx.fillText('監督の怒りが頂点に…', W/2, H/2 - 60);
+    cx.font = 'bold 44px ' + FONT;
+    cx.fillText('監督の怒りが頂点に…', W/2, H/2 - 110);
     cx.fillStyle = '#fff';
-    cx.font = 'bold 26px ' + FONT;
-    cx.fillText('SCORE: ' + score + '   HI-SCORE: ' + hiscore, W/2, H/2 + 2);
-    cx.font = '20px ' + FONT;
-    cx.fillText('クリック または R でタイトルへ', W/2, H/2 + 46);
+    cx.font = 'bold 24px ' + FONT;
+    cx.fillText('SCORE: ' + score + '   HI-SCORE: ' + hiscore, W/2, H/2 - 66);
+    // ランキング TOP5
+    const r = loadRank();
+    cx.fillStyle = '#ffd0e4';
+    cx.font = 'bold 16px ' + FONT;
+    cx.fillText('— 🏆 解体王ランキング TOP5 —', W/2, H/2 - 26);
+    cx.font = 'bold 15px ' + FONT;
+    if(r.length === 0){
+      cx.fillStyle = '#fff';
+      cx.fillText('まだ記録なし', W/2, H/2 + 2);
+    }
+    r.forEach((e, i) => {
+      cx.fillStyle = i === 0 ? '#ffe14d' : '#fff';
+      cx.fillText((i + 1) + '位　' + e.name + '　' + e.score + '点（STAGE ' + e.stage + '）', W/2, H/2 + 2 + i * 24);
+    });
+    cx.fillStyle = '#fff';
+    cx.font = '18px ' + FONT;
+    cx.fillText('クリック／タップ または R でタイトルへ', W/2, H/2 + 140);
+  }
+  if(state === 'ending'){
+    cx.fillStyle = 'rgba(255,46,146,.2)'; cx.fillRect(0, 0, W, H);
+    for(let i = 0; i < 22; i++){
+      const a2 = tGlobal * 1.4 + i * 1.7;
+      heart(W/2 + Math.cos(a2) * (130 + (i % 5) * 70),
+            H/2 - 30 + Math.sin(a2 * 1.3) * (100 + (i % 4) * 45),
+            8 + (i % 3) * 5, i % 2 ? PINK_L : PINK);
+    }
+    cx.fillStyle = 'rgba(0,0,0,.55)';
+    roundRect(W/2 - 310, H/2 - 130, 620, 250, 16); cx.fill();
+    cx.textAlign = 'center';
+    cx.fillStyle = '#ffe14d';
+    cx.font = 'bold 44px ' + FONT;
+    cx.fillText('🎉 全現場制覇！！ 🎉', W/2, H/2 - 72);
+    cx.fillStyle = '#fff';
+    cx.font = 'bold 20px ' + FONT;
+    cx.fillText('全10ステージ、日本中の名所を解体完了！', W/2, H/2 - 32);
+    cx.fillText('これぞ菊建魂。おつかれさまでした！', W/2, H/2 - 4);
+    cx.font = 'bold 32px ' + FONT;
+    cx.fillStyle = PINK_L;
+    cx.fillText('FINAL SCORE：' + score, W/2, H/2 + 46);
+    cx.fillStyle = '#fff';
+    cx.font = '17px ' + FONT;
+    if(Math.floor(tGlobal * 1.6) % 2 === 0) cx.fillText('クリック／タップでタイトルへ', W/2, H/2 + 92);
   }
   cx.restore();
 }
@@ -1266,6 +1650,7 @@ function pylon(x, baseY){
 
 // ---------- ビル ----------
 function drawBuilding(b){
+  if(b.landmark){ drawLandmark(b); return; }
   if(b.destroyed){
     cx.fillStyle = '#938878';
     cx.beginPath();
@@ -1325,6 +1710,269 @@ function crack(x, y, seed){
   cx.stroke();
 }
 
+// ---------- 名所ランドマーク（デフォルメ） ----------
+function drawLandmark(b){
+  if(b.destroyed){
+    cx.fillStyle = '#938878';
+    cx.beginPath();
+    cx.moveTo(b.x - 16, GROUND);
+    cx.quadraticCurveTo(b.x + b.w * 0.3, GROUND - 52, b.x + b.w * 0.55, GROUND - 38);
+    cx.quadraticCurveTo(b.x + b.w * 0.8, GROUND - 56, b.x + b.w + 16, GROUND);
+    cx.fill();
+    cx.fillStyle = '#7d7264';
+    for(let i = 0; i < 12; i++){
+      cx.fillRect(b.x + (i * 73) % b.w, GROUND - 18 - ((i * 37) % 26), 10, 8);
+    }
+    return;
+  }
+  const shx = b.shakeT > 0 ? (Math.random()*2-1) * 4 : 0;
+  const x = b.x + shx, w = b.w, h = b.h, gy = GROUND, top = gy - h, cxm = x + w/2;
+  const ratio = b.hp / b.maxHp;
+  cx.save();
+  drawLandmarkShape(b.kind, x, cxm, w, h, gy, top);
+  if(ratio < 0.66){
+    cx.strokeStyle = 'rgba(40,30,20,.6)'; cx.lineWidth = 2.5;
+    crack(cxm - w * 0.2, top + h * 0.3, 11);
+  }
+  if(ratio < 0.33){
+    crack(cxm + w * 0.12, top + h * 0.5, 17);
+    cx.fillStyle = 'rgba(60,50,40,.15)';
+    cx.fillRect(x, top, w, h);
+  }
+  cx.restore();
+  // 名前プレート＆ボスHPバー
+  cx.fillStyle = 'rgba(0,0,0,.55)';
+  roundRect(cxm - 95, top - 44, 190, 32, 8); cx.fill();
+  cx.fillStyle = '#ffe14d';
+  cx.font = 'bold 13px ' + FONT; cx.textAlign = 'center';
+  cx.fillText('🚧 ' + b.name, cxm, top - 30);
+  cx.fillStyle = 'rgba(0,0,0,.4)';
+  cx.fillRect(cxm - 88, top - 22, 176, 6);
+  cx.fillStyle = ratio > 0.5 ? '#7ad36b' : ratio > 0.25 ? '#ffd24d' : '#ff5252';
+  cx.fillRect(cxm - 88, top - 22, 176 * ratio, 6);
+}
+function drawLandmarkShape(kind, x, cxm, w, h, gy, top){
+  if(kind === 1){
+    // 東京タワー：赤白の鉄塔
+    cx.fillStyle = '#e8553a';
+    cx.beginPath();
+    cx.moveTo(x, gy); cx.lineTo(cxm - w*0.07, top + 16); cx.lineTo(cxm + w*0.07, top + 16); cx.lineTo(x + w, gy);
+    cx.closePath(); cx.fill();
+    cx.strokeStyle = 'rgba(255,255,255,.55)'; cx.lineWidth = 2;
+    for(let i = 1; i < 6; i++){
+      const t2 = i / 6, lw = lerp(w/2, w*0.07, t2);
+      cx.beginPath(); cx.moveTo(cxm - lw, gy - (h - 16) * t2); cx.lineTo(cxm + lw, gy - (h - 16) * t2); cx.stroke();
+    }
+    cx.fillStyle = '#f4f4f0';
+    cx.fillRect(cxm - w*0.24, gy - h*0.42, w*0.48, 16);
+    cx.fillRect(cxm - w*0.13, gy - h*0.72, w*0.26, 12);
+    cx.strokeStyle = '#c44432'; cx.lineWidth = 2;
+    cx.strokeRect(cxm - w*0.24, gy - h*0.42, w*0.48, 16);
+    cx.strokeStyle = '#e8553a'; cx.lineWidth = 4;
+    cx.beginPath(); cx.moveTo(cxm, top + 16); cx.lineTo(cxm, top - 6); cx.stroke();
+  }else if(kind === 2){
+    // スカイツリー：銀色の電波塔
+    cx.fillStyle = '#cdd8e2';
+    cx.beginPath();
+    cx.moveTo(cxm - w*0.26, gy); cx.lineTo(cxm - w*0.06, top + 30);
+    cx.lineTo(cxm + w*0.06, top + 30); cx.lineTo(cxm + w*0.26, gy);
+    cx.closePath(); cx.fill();
+    cx.strokeStyle = 'rgba(255,255,255,.6)'; cx.lineWidth = 1.5;
+    for(let i = 1; i < 8; i++){
+      const t2 = i / 8, lw = lerp(w*0.26, w*0.06, t2);
+      cx.beginPath();
+      cx.moveTo(cxm - lw, gy - (h - 30) * t2); cx.lineTo(cxm + lw * 0.6, gy - (h - 30) * (t2 + 0.1));
+      cx.moveTo(cxm + lw, gy - (h - 30) * t2); cx.lineTo(cxm - lw * 0.6, gy - (h - 30) * (t2 + 0.1));
+      cx.stroke();
+    }
+    cx.fillStyle = '#eef4f8'; cx.strokeStyle = '#8aa'; cx.lineWidth = 2;
+    cx.beginPath(); cx.ellipse(cxm, gy - h*0.56, w*0.2, 11, 0, 0, 7); cx.fill(); cx.stroke();
+    cx.beginPath(); cx.ellipse(cxm, gy - h*0.8, w*0.13, 8, 0, 0, 7); cx.fill(); cx.stroke();
+    cx.strokeStyle = '#cdd8e2'; cx.lineWidth = 3.5;
+    cx.beginPath(); cx.moveTo(cxm, top + 30); cx.lineTo(cxm, top - 8); cx.stroke();
+  }else if(kind === 3){
+    // 六本木ヒルズ：くびれた高層タワー
+    cx.fillStyle = '#5a6a78';
+    cx.beginPath();
+    cx.moveTo(x + w*0.06, gy);
+    cx.quadraticCurveTo(x + w*0.14, gy - h*0.55, x + w*0.2, top + 16);
+    cx.quadraticCurveTo(cxm, top - 6, x + w*0.8, top + 16);
+    cx.quadraticCurveTo(x + w*0.86, gy - h*0.55, x + w*0.94, gy);
+    cx.closePath(); cx.fill();
+    cx.strokeStyle = 'rgba(180,200,215,.5)'; cx.lineWidth = 2.5;
+    for(let i = 0; i < 8; i++){
+      const lx2 = x + w*0.16 + i * (w*0.68 / 7);
+      cx.beginPath(); cx.moveTo(lx2, top + 22); cx.lineTo(lx2 - w*0.02, gy - 4); cx.stroke();
+    }
+    cx.fillStyle = 'rgba(140,170,190,.35)';
+    cx.fillRect(x + w*0.18, gy - h*0.4, w*0.64, 10);
+  }else if(kind === 4){
+    // 日本武道館：緑の大屋根と金の擬宝珠
+    cx.fillStyle = '#f0ede4';
+    cx.fillRect(x + w*0.14, gy - h*0.48, w*0.72, h*0.48);
+    cx.strokeStyle = '#b8b0a0'; cx.lineWidth = 2;
+    cx.strokeRect(x + w*0.14, gy - h*0.48, w*0.72, h*0.48);
+    cx.fillStyle = '#5a4a3a';
+    cx.fillRect(cxm - w*0.07, gy - h*0.26, w*0.14, h*0.26);
+    cx.fillStyle = '#4a7a5a';
+    cx.beginPath();
+    cx.moveTo(x - 8, gy - h*0.46);
+    cx.quadraticCurveTo(cxm, top + 4, x + w + 8, gy - h*0.46);
+    cx.lineTo(x + w*0.82, gy - h*0.56);
+    cx.quadraticCurveTo(cxm, top - 4, x + w*0.18, gy - h*0.56);
+    cx.closePath(); cx.fill();
+    cx.beginPath();
+    cx.moveTo(x + w*0.16, gy - h*0.56);
+    cx.quadraticCurveTo(cxm, top - 10, x + w*0.84, gy - h*0.56);
+    cx.lineTo(cxm + w*0.2, gy - h*0.72);
+    cx.quadraticCurveTo(cxm, top - 14, cxm - w*0.2, gy - h*0.72);
+    cx.closePath(); cx.fill();
+    cx.fillStyle = '#f0c040';
+    cx.beginPath(); cx.arc(cxm, top + 8, 9, 0, 7); cx.fill();
+  }else if(kind === 5){
+    // 東京都庁：ツインタワー
+    cx.fillStyle = '#b8bcc8';
+    cx.fillRect(x, gy - h*0.4, w, h*0.4);
+    cx.fillStyle = '#a8aebc';
+    cx.fillRect(x + w*0.04, gy - h*0.4, w*0.36, -(h*0.6) + 18);
+    cx.fillRect(x + w*0.6, gy - h*0.4, w*0.36, -(h*0.6) + 18);
+    cx.fillStyle = '#98a0b0';
+    cx.beginPath();
+    cx.moveTo(x + w*0.04, top + 18); cx.lineTo(x + w*0.13, top); cx.lineTo(x + w*0.22, top + 18);
+    cx.closePath(); cx.fill();
+    cx.beginPath();
+    cx.moveTo(x + w*0.22, top + 26); cx.lineTo(x + w*0.31, top + 8); cx.lineTo(x + w*0.4, top + 26);
+    cx.closePath(); cx.fill();
+    cx.beginPath();
+    cx.moveTo(x + w*0.6, top + 26); cx.lineTo(x + w*0.69, top + 8); cx.lineTo(x + w*0.78, top + 26);
+    cx.closePath(); cx.fill();
+    cx.beginPath();
+    cx.moveTo(x + w*0.78, top + 18); cx.lineTo(x + w*0.87, top); cx.lineTo(x + w*0.96, top + 18);
+    cx.closePath(); cx.fill();
+    cx.strokeStyle = 'rgba(70,80,100,.4)'; cx.lineWidth = 1;
+    for(let i = 0; i < 10; i++){
+      const yy = gy - h*0.42 - i * (h*0.5 / 10);
+      cx.beginPath(); cx.moveTo(x + w*0.06, yy); cx.lineTo(x + w*0.38, yy);
+      cx.moveTo(x + w*0.62, yy); cx.lineTo(x + w*0.94, yy); cx.stroke();
+    }
+  }else if(kind === 6){
+    // 国立競技場：木のひさしのスタジアム
+    cx.fillStyle = '#d8bc92';
+    cx.beginPath(); cx.ellipse(cxm, gy - h*0.18, w*0.5, h*0.2, 0, 0, 7); cx.fill();
+    cx.fillStyle = '#c8a878';
+    cx.beginPath(); cx.ellipse(cxm, gy - h*0.45, w*0.48, h*0.18, 0, 0, 7); cx.fill();
+    cx.fillStyle = '#d8bc92';
+    cx.beginPath(); cx.ellipse(cxm, gy - h*0.68, w*0.46, h*0.16, 0, 0, 7); cx.fill();
+    cx.fillStyle = '#eef0ea';
+    cx.beginPath(); cx.ellipse(cxm, top + h*0.16, w*0.44, h*0.13, 0, 0, 7); cx.fill();
+    cx.strokeStyle = '#8a7a5a'; cx.lineWidth = 2;
+    for(let i = 0; i < 9; i++){
+      const lx2 = x + w*0.08 + i * (w*0.84 / 8);
+      cx.beginPath(); cx.moveTo(lx2, gy - 4); cx.lineTo(lx2 + 3, top + h*0.2); cx.stroke();
+    }
+    cx.fillStyle = '#3e6a4e';
+    cx.beginPath(); cx.ellipse(cxm, top + h*0.14, w*0.3, h*0.07, 0, 0, 7); cx.fill();
+  }else if(kind === 7){
+    // 雷門：大提灯
+    cx.fillStyle = '#a83228';
+    cx.fillRect(x + w*0.08, gy - h*0.7, w*0.13, h*0.7);
+    cx.fillRect(x + w*0.79, gy - h*0.7, w*0.13, h*0.7);
+    cx.fillStyle = '#3a342e';
+    cx.beginPath();
+    cx.moveTo(x - 14, gy - h*0.66);
+    cx.lineTo(x + w + 14, gy - h*0.66);
+    cx.lineTo(x + w + 4, top + 6);
+    cx.quadraticCurveTo(cxm, top - 8, x - 4, top + 6);
+    cx.closePath(); cx.fill();
+    // 大提灯
+    cx.fillStyle = '#d8342a';
+    cx.beginPath(); cx.ellipse(cxm, gy - h*0.34, w*0.18, h*0.26, 0, 0, 7); cx.fill();
+    cx.strokeStyle = 'rgba(60,20,15,.4)'; cx.lineWidth = 1.5;
+    for(let i = 1; i < 5; i++){
+      cx.beginPath(); cx.ellipse(cxm, gy - h*0.34, w*0.18 * Math.sin(i * 0.628), h*0.26, 0, 0, 7); cx.stroke();
+    }
+    cx.fillStyle = '#2a2a2a';
+    cx.fillRect(cxm - w*0.1, gy - h*0.62, w*0.2, 8);
+    cx.fillRect(cxm - w*0.1, gy - h*0.1, w*0.2, 8);
+    cx.fillStyle = '#fff';
+    cx.font = 'bold ' + Math.round(h*0.14) + 'px ' + FONT;
+    cx.textAlign = 'center';
+    cx.fillText('雷', cxm, gy - h*0.38);
+    cx.fillText('門', cxm, gy - h*0.22);
+  }else if(kind === 8){
+    // 通天閣
+    cx.strokeStyle = '#b8b0a0'; cx.lineWidth = 6;
+    cx.beginPath();
+    cx.moveTo(x + 6, gy); cx.quadraticCurveTo(cxm - w*0.16, gy - h*0.22, cxm - w*0.12, gy - h*0.36);
+    cx.moveTo(x + w - 6, gy); cx.quadraticCurveTo(cxm + w*0.16, gy - h*0.22, cxm + w*0.12, gy - h*0.36);
+    cx.stroke();
+    cx.fillStyle = '#c8c0b0';
+    cx.fillRect(cxm - w*0.13, gy - h*0.82, w*0.26, h*0.48);
+    // 広告板（菊建興業！）
+    cx.fillStyle = PINK;
+    cx.fillRect(cxm - w*0.16, gy - h*0.66, w*0.32, h*0.2);
+    cx.fillStyle = '#fff';
+    cx.font = 'bold ' + Math.round(h*0.085) + 'px ' + FONT;
+    cx.textAlign = 'center';
+    cx.fillText('菊建', cxm, gy - h*0.55);
+    // 展望台
+    cx.fillStyle = '#e8e4d8';
+    roundRect(cxm - w*0.3, top + 14, w*0.6, 26, 8); cx.fill();
+    cx.strokeStyle = '#9a9486'; cx.lineWidth = 2;
+    roundRect(cxm - w*0.3, top + 14, w*0.6, 26, 8); cx.stroke();
+    cx.fillStyle = '#c8c0b0';
+    cx.beginPath(); cx.arc(cxm, top + 12, w*0.14, Math.PI, 0); cx.fill();
+    cx.strokeStyle = '#c8c0b0'; cx.lineWidth = 3;
+    cx.beginPath(); cx.moveTo(cxm, top + 2); cx.lineTo(cxm, top - 10); cx.stroke();
+  }else if(kind === 9){
+    // 大阪城
+    cx.fillStyle = '#9a9486';
+    cx.beginPath();
+    cx.moveTo(x - 6, gy); cx.lineTo(x + w*0.12, gy - h*0.3);
+    cx.lineTo(x + w*0.88, gy - h*0.3); cx.lineTo(x + w + 6, gy);
+    cx.closePath(); cx.fill();
+    for(let i = 0; i < 3; i++){
+      const tw2 = w * (0.62 - i * 0.14), ty2 = gy - h*0.3 - i * h*0.2, th2 = h*0.16;
+      cx.fillStyle = '#f4f2ea';
+      cx.fillRect(cxm - tw2/2, ty2 - th2, tw2, th2);
+      cx.fillStyle = '#3e7a52';
+      cx.beginPath();
+      cx.moveTo(cxm - tw2/2 - 14, ty2 - th2);
+      cx.quadraticCurveTo(cxm, ty2 - th2 - 18, cxm + tw2/2 + 14, ty2 - th2);
+      cx.lineTo(cxm + tw2/2 - 8, ty2 - th2 - 10);
+      cx.quadraticCurveTo(cxm, ty2 - th2 - 24, cxm - tw2/2 + 8, ty2 - th2 - 10);
+      cx.closePath(); cx.fill();
+    }
+    cx.fillStyle = '#3e7a52';
+    cx.beginPath();
+    cx.moveTo(cxm - w*0.16, gy - h*0.3 - h*0.56);
+    cx.quadraticCurveTo(cxm, top - 6, cxm + w*0.16, gy - h*0.3 - h*0.56);
+    cx.closePath(); cx.fill();
+    cx.fillStyle = '#f0c040';
+    cx.beginPath(); cx.arc(cxm - w*0.07, top + 4, 5, 0, 7); cx.fill();
+    cx.beginPath(); cx.arc(cxm + w*0.07, top + 4, 5, 0, 7); cx.fill();
+  }else{
+    // 国会議事堂
+    cx.fillStyle = '#d8cfb8';
+    cx.fillRect(x, gy - h*0.42, w, h*0.42);
+    cx.fillRect(x, gy - h*0.52, w*0.2, h*0.52);
+    cx.fillRect(x + w*0.8, gy - h*0.52, w*0.2, h*0.52);
+    cx.fillStyle = '#c8bfa8';
+    cx.fillRect(cxm - w*0.13, gy - h*0.72, w*0.26, h*0.72);
+    cx.fillRect(cxm - w*0.1, gy - h*0.84, w*0.2, h*0.84 - h*0.72 + 2);
+    cx.fillStyle = '#b8af98';
+    cx.beginPath();
+    cx.moveTo(cxm - w*0.1, gy - h*0.84); cx.lineTo(cxm, top); cx.lineTo(cxm + w*0.1, gy - h*0.84);
+    cx.closePath(); cx.fill();
+    cx.fillStyle = 'rgba(70,60,45,.5)';
+    for(let r = 0; r < 3; r++){
+      for(let c = 0; c < 12; c++){
+        cx.fillRect(x + 10 + c * (w - 20) / 12, gy - h*0.38 + r * h*0.11, 8, h*0.07);
+      }
+    }
+  }
+}
+
 // ---------- 水玉＆ハート柄 ----------
 function dots(x, y, w, h, r){
   // 大きめ＆広めの水玉。ところどころハート
@@ -1371,7 +2019,7 @@ function drawExcavator(p){
   const S = p.scl || 1;
 
   cx.fillStyle = 'rgba(0,0,0,.18)';
-  cx.beginPath(); cx.ellipse(x, GROUND + 6, 60 * S, 8 * S, 0, 0, 7); cx.fill();
+  cx.beginPath(); cx.ellipse(x, y + 6, 60 * S, 8 * S, 0, 0, 7); cx.fill();
 
   // LV3はオーラ
   if(S > 1.3){
@@ -1436,22 +2084,27 @@ function drawExcavator(p){
   cx.strokeStyle = '#1c1c24'; cx.lineWidth = 2; cx.stroke();
   cx.fillStyle = '#9fd3e8';
   roundRect(cbx + 4, cby + 4, cw - 8, ch * 0.55, 4); cx.fill();
-  // 乗車中のオペレーター（スキンヘッド＋サングラス＋口ひげ）
+  // 乗車中のオペレーター（白帽子＋白ひげの先代社長スタイル）
   if(!p.empty){
-    cx.fillStyle = '#e8a877';
+    cx.fillStyle = '#dd9863';
     cx.beginPath(); cx.arc(cbx + cw/2 + 3, cby + 14, 6.5, 0, 7); cx.fill();
-    cx.fillStyle = 'rgba(255,255,255,.5)';
-    cx.beginPath(); cx.arc(cbx + cw/2 + 1, cby + 10, 2.2, 0, 7); cx.fill();  // 頭のツヤ
-    cx.strokeStyle = '#2a1a10'; cx.lineWidth = 1.3;                          // 鋭い眉
+    cx.fillStyle = '#f8f8f4';                                                // 白い帽子
+    cx.beginPath(); cx.arc(cbx + cw/2 + 3, cby + 12.5, 6.9, Math.PI, 0); cx.fill();
     cx.beginPath();
-    cx.moveTo(cbx + cw/2 - 1, cby + 11.5); cx.lineTo(cbx + cw/2 + 3, cby + 12.5);
-    cx.moveTo(cbx + cw/2 + 5, cby + 12.5); cx.lineTo(cbx + cw/2 + 9, cby + 11.5);
+    cx.ellipse(cbx + cw/2 + 3, cby + 12.5, 6.9, 2, 0, 0, 7); cx.fill();
+    cx.strokeStyle = '#4a4438'; cx.lineWidth = 1.2;                          // 穏やかな眉
+    cx.beginPath();
+    cx.moveTo(cbx + cw/2 - 1, cby + 15.2); cx.lineTo(cbx + cw/2 + 3, cby + 14.8);
+    cx.moveTo(cbx + cw/2 + 5, cby + 14.8); cx.lineTo(cbx + cw/2 + 9, cby + 15.2);
     cx.stroke();
     cx.fillStyle = '#2a1a10';                                                // 目
-    cx.beginPath(); cx.arc(cbx + cw/2 + 1, cby + 14, 1, 0, 7); cx.fill();
-    cx.beginPath(); cx.arc(cbx + cw/2 + 7, cby + 14, 1, 0, 7); cx.fill();
-    cx.fillStyle = '#1a1a1a';
-    cx.fillRect(cbx + cw/2 + 1, cby + 16.5, 8, 2.4);                         // 口ひげ
+    cx.beginPath(); cx.arc(cbx + cw/2 + 1, cby + 16.8, 1, 0, 7); cx.fill();
+    cx.beginPath(); cx.arc(cbx + cw/2 + 7, cby + 16.8, 1, 0, 7); cx.fill();
+    cx.fillStyle = '#2a2622';                                                // 黒い口ひげ＆あごひげ
+    cx.beginPath();
+    cx.ellipse(cbx + cw/2 + 4, cby + 19, 4.2, 1.4, 0, 0, 7); cx.fill();
+    cx.beginPath();
+    cx.ellipse(cbx + cw/2 + 4, cby + 21.2, 2.6, 1.2, 0, 0, 7); cx.fill();
   }
   cx.fillStyle = 'rgba(255,255,255,.45)';
   cx.beginPath();
@@ -1603,25 +2256,34 @@ function drawOperator(x, y, face, phase, t){
 
   cx.rotate(lean);
 
-  // 脚（軍パン＋ブーツ）
-  cx.strokeStyle = '#4a543a'; cx.lineWidth = 9; cx.lineCap = 'round';
-  cx.beginPath();
-  if(inAir){
-    cx.moveTo(-4, -30); cx.lineTo(-10, -10);
-    cx.moveTo(4, -30); cx.lineTo(12, -12);
-  }else{
-    cx.moveTo(-4, -30); cx.lineTo(-7 + run, -2);
-    cx.moveTo(4, -30); cx.lineTo(7 - run, -2);
+  // 脚（紺ニッカポッカ：太ももダボダボ→足首キュッ）
+  cx.fillStyle = '#2a3560';
+  const legPairs = inAir ? [[-4, -11], [4, 12]] : [[-4, -7 + run], [4, 7 - run]];
+  for(const [hipX, footX] of legPairs){
+    cx.beginPath();
+    cx.moveTo(hipX - 5, -30);
+    cx.quadraticCurveTo(hipX - 13 + (footX - hipX) * 0.3, -16, footX - 4, inAir ? -12 : -5);
+    cx.lineTo(footX + 4, inAir ? -12 : -5);
+    cx.quadraticCurveTo(hipX + 13 + (footX - hipX) * 0.3, -16, hipX + 5, -30);
+    cx.closePath(); cx.fill();
   }
+  cx.strokeStyle = '#1e2848'; cx.lineWidth = 1;
+  cx.beginPath();
+  cx.moveTo(legPairs[0][1] - 4, inAir ? -12 : -5); cx.lineTo(legPairs[0][1] + 4, inAir ? -12 : -5);
+  cx.moveTo(legPairs[1][1] - 4, inAir ? -12 : -5); cx.lineTo(legPairs[1][1] + 4, inAir ? -12 : -5);
   cx.stroke();
+  // 黒地下足袋
   cx.fillStyle = '#1e1e1e';
   if(!inAir){
-    cx.fillRect(-13 + run, -5, 13, 5);
-    cx.fillRect(1 - run, -5, 13, 5);
+    cx.fillRect(legPairs[0][1] - 9, -5, 13, 5);
+    cx.fillRect(legPairs[1][1] - 4, -5, 13, 5);
+  }else{
+    cx.fillRect(legPairs[0][1] - 6, -12, 11, 5);
+    cx.fillRect(legPairs[1][1] - 5, -12, 11, 5);
   }
 
-  // 胴体（オリーブのタンクトップ・厚い胸板）
-  cx.fillStyle = '#5a6b3c';
+  // 胴体（白Tシャツ・厚い胸板）
+  cx.fillStyle = '#f6f6f2';
   cx.beginPath();
   cx.moveTo(-15, -56);
   cx.quadraticCurveTo(-18, -42, -13, -28);
@@ -1629,10 +2291,34 @@ function drawOperator(x, y, face, phase, t){
   cx.quadraticCurveTo(18, -42, 15, -56);
   cx.quadraticCurveTo(0, -62, -15, -56);
   cx.closePath(); cx.fill();
-  cx.strokeStyle = '#42502c'; cx.lineWidth = 1.5; cx.stroke();
-  // 胸筋ライン
-  cx.strokeStyle = 'rgba(0,0,0,.25)'; cx.lineWidth = 1.5;
-  cx.beginPath(); cx.moveTo(0, -54); cx.lineTo(0, -42); cx.stroke();
+  cx.strokeStyle = '#c8c8c2'; cx.lineWidth = 1.5; cx.stroke();
+  // 半袖の袖口
+  cx.fillStyle = '#f6f6f2';
+  cx.fillRect(-18, -56, 6, 12);
+  cx.fillRect(12, -56, 6, 12);
+  // 紺の作業ベスト（前開き）
+  cx.fillStyle = '#2e3a6e';
+  cx.beginPath();
+  cx.moveTo(-15, -56);
+  cx.quadraticCurveTo(-18, -42, -13, -28);
+  cx.lineTo(-4, -28);
+  cx.lineTo(-5.5, -57);
+  cx.closePath(); cx.fill();
+  cx.beginPath();
+  cx.moveTo(15, -56);
+  cx.quadraticCurveTo(18, -42, 13, -28);
+  cx.lineTo(4, -28);
+  cx.lineTo(5.5, -57);
+  cx.closePath(); cx.fill();
+  // ベストのポケット＆赤いワンポイント
+  cx.strokeStyle = '#1e2850'; cx.lineWidth = 1;
+  cx.strokeRect(-12, -40, 6, 6);
+  cx.strokeRect(6, -40, 6, 6);
+  cx.fillStyle = '#d8262b';
+  cx.fillRect(7, -52, 3.2, 3.2);
+  // 首元
+  cx.strokeStyle = '#c8c8c2'; cx.lineWidth = 1.5;
+  cx.beginPath(); cx.arc(3, -58, 5, 0.3, Math.PI - 0.3); cx.stroke();
 
   // 腕（筋骨隆々・両手でハンマー）
   cx.strokeStyle = '#e8a877'; cx.lineWidth = 8.5; cx.lineCap = 'round';
@@ -1663,37 +2349,63 @@ function drawOperator(x, y, face, phase, t){
   roundRect(-9, -15, 24, 30, 6); cx.stroke();
   cx.restore();
 
-  // 頭（スキンヘッド＋サングラス＋口ひげ）
+  // 頭（白い帽子＋白髪まじりのひげ：先代社長スタイル）
   const hx = 5, hy = -68;
-  cx.fillStyle = '#e8a877';
+  cx.fillStyle = '#dd9863';   // 日焼け肌
   cx.beginPath(); cx.arc(hx, hy, 11, 0, 7); cx.fill();
   // 太い首
   cx.fillRect(hx - 7, hy + 7, 14, 8);
-  // 頭のツヤ（禿）
-  cx.fillStyle = 'rgba(255,255,255,.55)';
-  cx.beginPath(); cx.ellipse(hx - 3, hy - 6, 4, 2.5, -0.5, 0, 7); cx.fill();
   // 耳
-  cx.fillStyle = '#d89868';
+  cx.fillStyle = '#c98852';
   cx.beginPath(); cx.arc(hx - 10, hy + 1, 3, 0, 7); cx.fill();
-  // 鋭い眉とこわもての目
-  cx.strokeStyle = '#1f1f1f'; cx.lineWidth = 2.6; cx.lineCap = 'round';
+  // 白いタオル帽子（ハンマー中に吹っ飛ぶとスキンヘッド！）
+  const capOff = opFx && opFx.capOff;
+  if(!capOff){
+    cx.fillStyle = '#f8f8f4';
+    cx.beginPath(); cx.arc(hx, hy - 3, 11.2, Math.PI, 0); cx.fill();
+    cx.beginPath(); cx.ellipse(hx, hy - 3, 11.2, 3.6, 0, 0, 7); cx.fill();
+    cx.strokeStyle = '#d4d4cc'; cx.lineWidth = 1.2;
+    cx.beginPath(); cx.ellipse(hx, hy - 3, 11.2, 3.6, 0, 0, 7); cx.stroke();
+    cx.beginPath(); cx.arc(hx, hy - 8, 5, Math.PI, 0); cx.stroke();
+  }else{
+    // スキンヘッド（ピカーン）
+    cx.fillStyle = 'rgba(255,255,255,.6)';
+    cx.beginPath(); cx.ellipse(hx - 3, hy - 6, 4.5, 2.8, -0.5, 0, 7); cx.fill();
+    cx.fillStyle = 'rgba(255,255,200,.9)';
+    const tw2 = (tGlobal * 6) % 6.28;
+    cx.save(); cx.translate(hx - 3, hy - 7); cx.rotate(tw2);
+    cx.beginPath();
+    cx.moveTo(-7, 0); cx.lineTo(7, 0); cx.moveTo(0, -7); cx.lineTo(0, 7);
+    cx.strokeStyle = 'rgba(255,255,200,.8)'; cx.lineWidth = 1.6; cx.stroke();
+    cx.restore();
+  }
+  // 穏やかな眉（白髪まじり）
+  cx.strokeStyle = '#5a544a'; cx.lineWidth = 2.2; cx.lineCap = 'round';
   cx.beginPath();
-  cx.moveTo(hx - 1, hy - 5.5); cx.lineTo(hx + 5, hy - 3.6);
-  cx.moveTo(hx + 8, hy - 3.6); cx.lineTo(hx + 13.5, hy - 5.5);
+  cx.moveTo(hx + 0.5, hy - 0.8); cx.lineTo(hx + 5.5, hy - 1.6);
+  cx.moveTo(hx + 8.5, hy - 1.6); cx.lineTo(hx + 13.5, hy - 0.8);
   cx.stroke();
-  cx.fillStyle = '#1f1f1f';
-  cx.beginPath(); cx.arc(hx + 3.6, hy - 0.6, 1.7, 0, 7); cx.fill();
-  cx.beginPath(); cx.arc(hx + 10.6, hy - 0.6, 1.7, 0, 7); cx.fill();
-  // 口ひげ（もっさり）
-  cx.fillStyle = '#2a2a2a';
-  cx.beginPath();
-  cx.moveTo(hx + 1, hy + 4);
-  cx.quadraticCurveTo(hx + 7, hy + 2.5, hx + 12, hy + 5);
-  cx.quadraticCurveTo(hx + 7, hy + 9, hx + 1, hy + 7);
-  cx.closePath(); cx.fill();
-  // 一文字の口
-  cx.strokeStyle = '#7a4828'; cx.lineWidth = 1.5;
-  cx.beginPath(); cx.moveTo(hx + 4, hy + 10); cx.lineTo(hx + 10, hy + 10); cx.stroke();
+  // 目（にこやか）
+  cx.fillStyle = '#2a2018';
+  cx.beginPath(); cx.arc(hx + 3.6, hy + 1.8, 1.6, 0, 7); cx.fill();
+  cx.beginPath(); cx.arc(hx + 10.6, hy + 1.8, 1.6, 0, 7); cx.fill();
+  // 笑いジワ
+  cx.strokeStyle = 'rgba(120,80,50,.5)'; cx.lineWidth = 1;
+  cx.beginPath(); cx.arc(hx + 1, hy + 3, 2, Math.PI * 1.3, Math.PI * 1.9); cx.stroke();
+  // 笑顔の口
+  cx.strokeStyle = '#6a3a22'; cx.lineWidth = 1.8;
+  cx.beginPath(); cx.arc(hx + 7, hy + 5, 3.6, Math.PI * 0.12, Math.PI * 0.88); cx.stroke();
+  // 黒い立派な口ひげ
+  cx.fillStyle = '#2a2622';
+  cx.beginPath(); cx.ellipse(hx + 3.4, hy + 5.4, 4, 2.1, 0.25, 0, 7); cx.fill();
+  cx.beginPath(); cx.ellipse(hx + 10.6, hy + 5.4, 4, 2.1, -0.25, 0, 7); cx.fill();
+  cx.fillStyle = 'rgba(60,55,50,.7)';
+  cx.beginPath(); cx.ellipse(hx + 7, hy + 4.6, 2.4, 1.4, 0, 0, 7); cx.fill();
+  // あごひげ（黒）
+  cx.fillStyle = '#2a2622';
+  cx.beginPath(); cx.ellipse(hx + 7, hy + 10.4, 4.6, 2.8, 0, 0, 7); cx.fill();
+  cx.fillStyle = 'rgba(70,65,58,.55)';
+  cx.beginPath(); cx.ellipse(hx + 7, hy + 9.6, 3, 1.6, 0, 0, 7); cx.fill();
 
   cx.restore();
 }
@@ -2002,34 +2714,221 @@ function drawSpecialScreen(){
   }
 }
 
+// ---------- 天候エフェクト（画面全体） ----------
+function drawWeatherFx(){
+  if(state === 'title') return;
+  if(weather === 'rain' || weather === 'storm'){
+    const storm = weather === 'storm';
+    const n = storm ? 90 : 50, spd = storm ? 1000 : 650, ang = storm ? 0.45 : 0.12;
+    cx.strokeStyle = storm ? 'rgba(200,215,235,.5)' : 'rgba(180,200,225,.45)';
+    cx.lineWidth = storm ? 2 : 1.5;
+    cx.beginPath();
+    for(let i = 0; i < n; i++){
+      const seed = i * 137;
+      const rx = ((seed * 7 + tGlobal * spd * ang) % (W + 100)) - 50;
+      const ry = ((seed * 13 + tGlobal * spd) % (H + 60)) - 30;
+      const len = storm ? 22 : 14;
+      cx.moveTo(rx, ry);
+      cx.lineTo(rx - len * ang, ry + len);
+    }
+    cx.stroke();
+    if(storm){
+      cx.fillStyle = 'rgba(20,24,40,.16)';
+      cx.fillRect(0, 0, W, H);
+    }
+  }else if(weather === 'snow'){
+    cx.fillStyle = 'rgba(255,255,255,.85)';
+    for(let i = 0; i < 70; i++){
+      const seed = i * 211;
+      const ry = ((seed * 13 + tGlobal * 70) % (H + 40)) - 20;
+      const rx = ((seed * 7 + Math.sin(tGlobal * 1.2 + i) * 40) % (W + 60) + W + 60) % (W + 60) - 30;
+      cx.beginPath(); cx.arc(rx, ry, 1.6 + (i % 3), 0, 7); cx.fill();
+    }
+  }
+}
+
+// ---------- カラス ----------
+function drawBird(bd){
+  cx.save();
+  cx.translate(bd.x, bd.y);
+  cx.scale(Math.sign(bd.vx) || 1, 1);
+  const flap = Math.sin(bd.t * 14) * 10;
+  // 翼
+  cx.fillStyle = '#23232b';
+  cx.beginPath();
+  cx.moveTo(-2, -2);
+  cx.quadraticCurveTo(-14, -10 - flap, -26, -6 - flap);
+  cx.quadraticCurveTo(-14, 2 - flap * 0.4, -2, 3);
+  cx.closePath(); cx.fill();
+  // 体
+  cx.fillStyle = '#2e2e38';
+  cx.beginPath(); cx.ellipse(0, 0, 13, 7, 0.1, 0, 7); cx.fill();
+  // 頭・くちばし
+  cx.beginPath(); cx.arc(11, -4, 6, 0, 7); cx.fill();
+  cx.fillStyle = '#e8a03a';
+  cx.beginPath();
+  cx.moveTo(16, -5); cx.lineTo(24, -3); cx.lineTo(16, -1);
+  cx.closePath(); cx.fill();
+  // 目
+  cx.fillStyle = '#fff';
+  cx.beginPath(); cx.arc(12, -5, 1.7, 0, 7); cx.fill();
+  cx.fillStyle = '#000';
+  cx.beginPath(); cx.arc(12.6, -5, 0.9, 0, 7); cx.fill();
+  cx.restore();
+}
+function drawPoop(q){
+  cx.fillStyle = '#f4f0e2';
+  cx.beginPath(); cx.arc(q.x, q.y, 5, 0, 7); cx.fill();
+  cx.fillStyle = '#d8cfb0';
+  cx.beginPath(); cx.arc(q.x - 1.5, q.y - 1.5, 2.2, 0, 7); cx.fill();
+}
+
+// ---------- お宝 ----------
+function drawPickup(q){
+  const blink = q.life < 2 && Math.floor(q.life * 6) % 2 === 0;
+  if(blink) return;
+  const bob = q.grounded ? Math.sin(tGlobal * 4 + q.x) * 2 : 0;
+  cx.save();
+  cx.translate(q.x, q.y + bob);
+  // 光輪
+  cx.fillStyle = 'rgba(255,225,77,.25)';
+  cx.beginPath(); cx.arc(0, -14, 20 + Math.sin(tGlobal * 5) * 3, 0, 7); cx.fill();
+  if(q.type === 'cat'){
+    // 捨て猫（段ボール入り）
+    cx.fillStyle = '#c8a060';
+    cx.fillRect(-16, -16, 32, 16);
+    cx.strokeStyle = '#a8824a'; cx.lineWidth = 1.5;
+    cx.strokeRect(-16, -16, 32, 16);
+    cx.fillStyle = '#fff';
+    cx.beginPath(); cx.arc(0, -18, 8, 0, 7); cx.fill();
+    cx.beginPath();
+    cx.moveTo(-7, -22); cx.lineTo(-5, -29); cx.lineTo(-1, -24); cx.closePath(); cx.fill();
+    cx.moveTo(7, -22);
+    cx.beginPath();
+    cx.moveTo(7, -22); cx.lineTo(5, -29); cx.lineTo(1, -24); cx.closePath(); cx.fill();
+    cx.fillStyle = '#e8843a';
+    cx.beginPath(); cx.arc(4, -20, 3.4, 0, 7); cx.fill();
+    cx.fillStyle = '#333';
+    cx.beginPath(); cx.arc(-3, -18, 1, 0, 7); cx.fill();
+    cx.beginPath(); cx.arc(3, -18, 1, 0, 7); cx.fill();
+    cx.strokeStyle = '#333'; cx.lineWidth = 1;
+    cx.beginPath(); cx.arc(0, -16, 1.6, 0.2, Math.PI - 0.2); cx.stroke();
+  }else if(q.type === 'bone'){
+    cx.save();
+    cx.rotate(-0.4);
+    cx.fillStyle = '#f4f0e4';
+    cx.fillRect(-12, -14, 24, 5);
+    [[-12,-14],[-12,-9],[12,-14],[12,-9]].forEach(pt => {
+      cx.beginPath(); cx.arc(pt[0], pt[1] + 2.5 - 14 + 11.5, 4, 0, 7); cx.fill();
+    });
+    cx.beginPath(); cx.arc(-12, -14, 4, 0, 7); cx.fill();
+    cx.beginPath(); cx.arc(-12, -9, 4, 0, 7); cx.fill();
+    cx.beginPath(); cx.arc(12, -14, 4, 0, 7); cx.fill();
+    cx.beginPath(); cx.arc(12, -9, 4, 0, 7); cx.fill();
+    cx.restore();
+  }else{
+    // お札
+    cx.fillStyle = '#f8f4e8';
+    cx.fillRect(-7, -34, 14, 34);
+    cx.strokeStyle = '#b8a888'; cx.lineWidth = 1;
+    cx.strokeRect(-7, -34, 14, 34);
+    cx.fillStyle = '#c0392b';
+    cx.fillRect(-5, -32, 10, 7);
+    cx.strokeStyle = '#5a4a6a'; cx.lineWidth = 1.6;
+    cx.beginPath();
+    cx.moveTo(0, -23); cx.lineTo(0, -6);
+    cx.moveTo(-3, -19); cx.lineTo(3, -16);
+    cx.moveTo(3, -12); cx.lineTo(-3, -9);
+    cx.stroke();
+  }
+  cx.restore();
+}
+
+// ---------- 散水職人 ----------
+function drawSprayer(sw){
+  cx.save();
+  cx.translate(sw.x, GROUND);
+  // ホース（画面端から引いてくる）
+  cx.strokeStyle = '#d8d8e0'; cx.lineWidth = 5;
+  cx.beginPath();
+  const hoseFromX = sw.dir === 1 ? camX - 20 : camX + W + 20;
+  cx.moveTo(hoseFromX - sw.x, -6);
+  cx.quadraticCurveTo((hoseFromX - sw.x) * 0.4, 14, -sw.face * 4, -38);
+  cx.stroke();
+  cx.scale(sw.face, 1);
+  const walk = sw.state !== 'spray' ? Math.sin(sw.t * 12) * 5 : 0;
+  // 影
+  cx.fillStyle = 'rgba(0,0,0,.15)';
+  cx.beginPath(); cx.ellipse(0, 3, 15, 4, 0, 0, 7); cx.fill();
+  // 脚（紺の作業ズボン）
+  cx.strokeStyle = '#2a3560'; cx.lineWidth = 7; cx.lineCap = 'round';
+  cx.beginPath();
+  cx.moveTo(-3, -28); cx.lineTo(-6 + walk, -2);
+  cx.moveTo(3, -28); cx.lineTo(6 - walk, -2);
+  cx.stroke();
+  cx.fillStyle = '#222';
+  cx.fillRect(-10 + walk, -4, 10, 4);
+  cx.fillRect(2 - walk, -4, 10, 4);
+  // 胴体（水色の作業着）
+  cx.fillStyle = '#6aa8d8';
+  roundRect(-11, -52, 22, 26, 6); cx.fill();
+  cx.strokeStyle = '#4a88b8'; cx.lineWidth = 1.5;
+  roundRect(-11, -52, 22, 26, 6); cx.stroke();
+  // 腕（ホースを構える）
+  cx.strokeStyle = '#6aa8d8'; cx.lineWidth = 5.5;
+  cx.beginPath();
+  cx.moveTo(6, -48); cx.lineTo(16, -42);
+  cx.moveTo(-6, -48); cx.lineTo(8, -38);
+  cx.stroke();
+  // ノズル
+  cx.fillStyle = '#888';
+  cx.fillRect(12, -45, 13, 5);
+  // 頭＋青ヘルメット＋タオル
+  cx.fillStyle = '#f0b189';
+  cx.beginPath(); cx.arc(2, -62, 9, 0, 7); cx.fill();
+  cx.fillStyle = '#3a6ab8';
+  cx.beginPath(); cx.arc(2, -65, 9.5, Math.PI, 0); cx.fill();
+  cx.fillRect(-8, -66, 21, 3);
+  // にっこり
+  cx.strokeStyle = '#7a4a28'; cx.lineWidth = 1.5;
+  cx.beginPath(); cx.arc(4, -60, 3, Math.PI * 0.15, Math.PI * 0.85); cx.stroke();
+  cx.fillStyle = '#3a1a10';
+  cx.beginPath(); cx.arc(0, -63, 1.1, 0, 7); cx.fill();
+  cx.beginPath(); cx.arc(7, -63, 1.1, 0, 7); cx.fill();
+  cx.restore();
+}
+
 // ---------- HUD ----------
 function drawHUD(){
   const p = player;
   gaugeBar(16, 14, 224, 22, p.hp / p.maxHp, PINK, PINK_L, '耐久');
   heart(252, 25, 9, PINK);
-  gaugeBar(16, 42, 170, 16, p.beam / 100, p.beamLock ? '#888' : '#6cc8ff', p.beamLock ? '#aaa' : '#aee2ff', 'ビーム');
-  gaugeBar(16, 64, 170, 16, p.sp / 100, '#ffb347', '#ffe14d', '必殺');
-  if(p.sp >= 100 && Math.floor(tGlobal * 3) % 2 === 0){
-    cx.fillStyle = '#ffe14d';
-    cx.font = 'bold 13px ' + FONT;
-    cx.textAlign = 'left';
-    cx.fillText('★ SPACE：ラブ＆クラッシュ！', 196, 77);
+  if(p.beamTime > 0){
+    gaugeBar(16, 42, 170, 16, p.beamTime / 8.5, '#6cc8ff', '#ffd0e4', '💗ビーム解放中！');
+  }else{
+    gaugeBar(16, 42, 170, 16, p.sp / 100, '#ffb347', '#ffe14d', '必殺');
+    if(p.sp >= 100 && Math.floor(tGlobal * 3) % 2 === 0){
+      cx.fillStyle = '#ffe14d';
+      cx.font = 'bold 13px ' + FONT;
+      cx.textAlign = 'left';
+      cx.fillText('★ SPACE：ラブ＆クラッシュビーム！', 196, 55);
+    }
   }
-  gaugeBar(16, 86, 170, 16, p.guts / 100, '#8aa05a', '#c8dc8a', '漢気');
+  gaugeBar(16, 64, 170, 16, p.guts / 100, '#8aa05a', '#c8dc8a', '漢気');
   if(p.guts >= 100 && Math.floor(tGlobal * 3 + 1) % 2 === 0){
     cx.fillStyle = '#c8dc8a';
     cx.font = 'bold 13px ' + FONT;
     cx.textAlign = 'left';
-    cx.fillText('★ E：最終手段（大ハンマー）', 196, 99);
+    cx.fillText('★ E：最終手段（大ハンマー）', 196, 77);
   }
   // 強化レベル（説得人数で成長）
   const lvProg = p.lv >= 3 ? 1 : (p.kills - LV_KILLS[p.lv - 1]) / (LV_KILLS[p.lv] - LV_KILLS[p.lv - 1]);
-  gaugeBar(16, 108, 170, 16, lvProg, PINK_D, PINK_L, p.lv >= 3 ? '強化 MAX' : '強化 LV' + p.lv);
+  gaugeBar(16, 86, 170, 16, lvProg, PINK_D, PINK_L, p.lv >= 3 ? '強化 MAX' : '強化 LV' + p.lv);
   if(p.lv < 3){
     cx.fillStyle = '#ffd0e4';
     cx.font = 'bold 11px ' + FONT;
     cx.textAlign = 'left';
-    cx.fillText('あと' + (LV_KILLS[p.lv] - p.kills) + '人説得でLV' + (p.lv + 1), 196, 120);
+    cx.fillText('あと' + (LV_KILLS[p.lv] - p.kills) + '人説得でLV' + (p.lv + 1), 196, 98);
   }
   cx.textAlign = 'right';
   cx.font = 'bold 22px ' + FONT;
@@ -2045,7 +2944,7 @@ function drawHUD(){
   cx.textAlign = 'center';
   cx.font = 'bold 17px ' + FONT;
   cx.strokeStyle = 'rgba(0,0,0,.45)'; cx.lineWidth = 4;
-  const stTxt = 'STAGE ' + stage + '　残りビル ' + remain + ' 棟';
+  const stTxt = 'STAGE ' + stage + '/' + MAX_STAGE + ' ' + WICON[weather] + '　残り ' + remain + ' 棟';
   cx.strokeText(stTxt, W/2, 32);
   cx.fillStyle = '#fff';
   cx.fillText(stTxt, W/2, 32);
@@ -2175,24 +3074,24 @@ function drawTitle(){
   cx.textAlign = 'left';
   const lx = W/2 - 245;
   if(touchMode){
-    cx.fillText('🚜  左下の ◀ ▶ … 走行　　▲ … ジャンプ', lx, 276);
-    cx.fillText('💗  画面をタッチ … その場所にハートビーム（押しっぱなしOK）', lx, 302);
-    cx.fillText('✂  右下ボタン … ハサミ型クラッシャーで挟み割る', lx, 328);
-    cx.fillText('💥  💗ボタン … 必殺「ラブ＆クラッシュ」（必殺ゲージMAX時）', lx, 354);
-    cx.fillText('🔨  ⚒ボタン … 最終手段！オペレーター大ハンマー（漢気MAX時）', lx, 380);
+    cx.fillText('🚜  左下の ◀ ▶ … 走行（スピードに乗って体当たり！）　▲ … ジャンプ', lx, 276);
+    cx.fillText('🦷  画面をタッチ … 油圧圧砕機でガブガブ噛み壊す（押しっぱなしOK）', lx, 302);
+    cx.fillText('🐦  ステージ3からカラスがフン爆撃！圧砕機で追い払え', lx, 328);
+    cx.fillText('💥  💗ボタン … 必殺ラブ＆クラッシュ→ハートビーム解放（必殺MAX）', lx, 354);
+    cx.fillText('🔨  ⚒ボタン … 最終手段！オペレーター大ハンマー（漢気MAX）', lx, 380);
   }else{
-    cx.fillText('🚜  A / D … 走行　　W … ジャンプ　　マウス … アーム操作', lx, 276);
-    cx.fillText('💗  左クリック長押し … ハートビーム（ゲージ消費）', lx, 302);
-    cx.fillText('🦀  右クリック … ハサミ型クラッシャーで挟み割る（近接大ダメージ）', lx, 328);
-    cx.fillText('💥  スペース … 必殺「ラブ＆クラッシュ」（必殺ゲージMAX時）', lx, 354);
-    cx.fillText('🔨  E … 最終手段！オペレーター降車→大ハンマー（漢気MAX時）', lx, 380);
+    cx.fillText('🚜  A / D … 走行（スピードに乗って体当たり！）　W … ジャンプ', lx, 276);
+    cx.fillText('🦷  クリック長押し … 油圧圧砕機でガブガブ噛み壊す', lx, 302);
+    cx.fillText('🐦  ステージ3からカラスがフン爆撃！圧砕機で追い払え', lx, 328);
+    cx.fillText('💥  スペース … 必殺ラブ＆クラッシュ→ハートビーム解放（必殺MAX）', lx, 354);
+    cx.fillText('🔨  E … 最終手段！オペレーター降車→大ハンマー（漢気MAX）', lx, 380);
   }
   cx.fillStyle = '#ffd0e4';
   cx.font = 'bold 13px ' + FONT;
-  cx.fillText('監督を説得するほど重機がパワーアップ（LV3で巨大化＆超火力）！ビル全棟解体でクリア！', lx, 408);
+  cx.fillText('全10ステージ！各現場のボスは日本の名所（デフォルメ）。監督説得で重機パワーアップ！', lx, 408);
   cx.fillStyle = 'rgba(255,255,255,.7)';
   cx.font = '12px ' + FONT;
-  cx.fillText(touchMode && innerHeight > innerWidth ? '📱 スマホは横向きにすると遊びやすいです' : '※漢気ゲージは時間と被ダメージで溜まる（開始時は満タン）', lx, 430);
+  cx.fillText(touchMode && innerHeight > innerWidth ? '📱 スマホは横向きにすると遊びやすいです' : '※たまに散水職人が助けに来てくれる。建物からは…何か出るかも？', lx, 430);
 
   cx.textAlign = 'center';
   if(Math.floor(tGlobal * 1.6) % 2 === 0){
@@ -2200,9 +3099,15 @@ function drawTitle(){
     cx.font = 'bold 26px ' + FONT;
     cx.fillText(touchMode ? '▶ タップでスタート ◀' : '▶ クリックでスタート ◀', W/2, 482);
   }
-  cx.fillStyle = 'rgba(255,255,255,.8)';
-  cx.font = '13px ' + FONT;
-  cx.fillText('HI-SCORE: ' + hiscore, W/2, 510);
+  // ランキングTOP3
+  const r3 = loadRank().slice(0, 3);
+  cx.fillStyle = 'rgba(255,255,255,.85)';
+  cx.font = 'bold 13px ' + FONT;
+  if(r3.length > 0){
+    cx.fillText('🏆 ' + r3.map((e, i) => (i + 1) + '位 ' + e.name + ' ' + e.score).join('　／　'), W/2, 510);
+  }else{
+    cx.fillText('HI-SCORE: ' + hiscore, W/2, 510);
+  }
 }
 
 requestAnimationFrame(loop);
