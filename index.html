@@ -28,6 +28,27 @@ const PINK_L = '#ff8fc6';
 const LV_SCALE = [1, 1.18, 1.4];     // 機体サイズ
 const LV_MUL   = [1, 1.6, 2.4];      // 火力倍率
 const LV_KILLS = [0, 4, 10];         // 必要説得人数
+// 難易度（enemy:敵の数 dmg:被ダメージ倍率 ehp:敵の頑丈さ bhp:ビル/ボスの頑丈さ）
+const DIFFS = [
+  { name: 'やさしい', col: '#7ad36b', enemy: 1,   dmg: 1,   ehp: 1,    bhp: 1 },
+  { name: 'ふつう',   col: '#ffd24d', enemy: 1.5, dmg: 1.5, ehp: 1.35, bhp: 1.2 },
+  { name: '高難度',   col: '#ff5252', enemy: 2,   dmg: 2,   ehp: 1.7,  bhp: 1.45 },
+  { name: '鬼むず',   col: '#b44dff', enemy: 4,   dmg: 4,   ehp: 3.4,  bhp: 2.9 },
+];
+let diff = 0;
+const MODE_BTNS = [
+  { x: W/2 - 332, y: 468, w: 156, h: 42 },
+  { x: W/2 - 162, y: 468, w: 156, h: 42 },
+  { x: W/2 + 8,   y: 468, w: 156, h: 42 },
+  { x: W/2 + 178, y: 468, w: 156, h: 42 },
+];
+function titleModeAt(x, y){
+  for(let i = 0; i < MODE_BTNS.length; i++){
+    const b = MODE_BTNS[i];
+    if(x >= b.x - 6 && x <= b.x + b.w + 6 && y >= b.y - 6 && y <= b.y + b.h + 6) return i;
+  }
+  return -1;
+}
 
 function fit(){
   const s = Math.min(innerWidth / W, innerHeight / H) * 0.97;
@@ -180,6 +201,10 @@ addEventListener('keydown', e => {
   if(e.code === 'KeyE' && !keys['KeyE'] && state === 'play') tryHammer();
   keys[e.code] = true;
   if(e.code === 'KeyR' && (state === 'gameover' || state === 'ending')) toTitle();
+  if(state === 'title' && ['Digit1', 'Digit2', 'Digit3', 'Digit4'].includes(e.code)){
+    diff = +e.code.slice(-1) - 1;
+    newGame();
+  }
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
 cv.addEventListener('mousemove', e => {
@@ -189,7 +214,13 @@ cv.addEventListener('mousemove', e => {
 });
 cv.addEventListener('mousedown', e => {
   ac().resume && ac().resume();
-  if(state === 'title'){ newGame(); return; }
+  if(state === 'title'){
+    const r = cv.getBoundingClientRect();
+    const mx2 = (e.clientX - r.left) * W / r.width, my2 = (e.clientY - r.top) * H / r.height;
+    const m = titleModeAt(mx2, my2);
+    if(m >= 0){ diff = m; newGame(); }
+    return;
+  }
   if(state === 'gameover' || state === 'ending'){ toTitle(); return; }
   if(e.button === 0) beamHeld = true;
   if(e.button === 2) tryCrush();
@@ -223,7 +254,12 @@ cv.addEventListener('touchstart', e => {
   e.preventDefault();
   touchMode = true;
   try{ ac().resume && ac().resume(); }catch(err){}
-  if(state === 'title'){ newGame(); return; }
+  if(state === 'title'){
+    const pos = touchPos(e.changedTouches[0]);
+    const m = titleModeAt(pos.x, pos.y);
+    if(m >= 0){ diff = m; newGame(); }
+    return;
+  }
   if(state === 'gameover' || state === 'ending'){ toTitle(); return; }
   for(const t of e.changedTouches){
     const pos = touchPos(t);
@@ -288,6 +324,8 @@ let sprayer = null;     // 助っ人散水職人
 let birdTimer = 0, sprayTimer = 0;
 let stageIntroT = 0, lightningT = 0, spookyT = 0;
 let rankSaved = false;
+let boss = null;        // 建機ボス
+let allies = [];        // 応援のピンク重機
 const MAX_STAGE = 10;
 const LANDMARKS = [
   { name: '東京タワー（風）',   w: 170, h: 300 },
@@ -332,6 +370,7 @@ function startStage(n){
   buildings = []; sups = []; angerShots = []; parts = []; texts = []; bubbles = [];
   birds = []; poops = []; pickups = []; sprayer = null;
   spFx = null; opFx = null; gWave = null; flashT = 0;
+  boss = null; allies = [];
   // 天候（ステージ1は晴れ、最終ステージは台風）
   weather = n === 1 ? 'sun' : n === MAX_STAGE ? 'storm'
           : pick(n >= 5 ? ['sun', 'rain', 'snow', 'storm'] : ['sun', 'rain', 'snow']);
@@ -340,16 +379,26 @@ function startStage(n){
   for(let i = 0; i < count; i++){
     const w = 130 + Math.random() * 90;
     const h = 110 + Math.random() * (120 + n * 16);
-    const hp = Math.round((w * h) / 1500) + n * 2;
+    const hp = Math.round(((w * h) / 1500 + n * 2) * DIFFS[diff].bhp);
     buildings.push({ x, w, h, hp, maxHp: hp, seed: Math.random() * 1000 | 0, destroyed: false, shakeT: 0 });
     x += w + 170 + Math.random() * 110;
   }
   // ステージボス：日本の名所（デフォルメ）
   const lm = LANDMARKS[Math.min(n, MAX_STAGE) - 1];
   x += 140;
-  const lhp = 45 + n * 20;
+  const lhp = Math.round((45 + n * 20) * DIFFS[diff].bhp);
   buildings.push({ x, w: lm.w, h: lm.h, hp: lhp, maxHp: lhp, seed: 7,
                    destroyed: false, shakeT: 0, landmark: true, kind: Math.min(n, MAX_STAGE), name: lm.name });
+  // 建機ボス（偶数ステージで名所の手前に出現）
+  const bdef = bossForStage(n);
+  if(bdef){
+    const bhp2 = Math.round(bdef.hp * DIFFS[diff].bhp);
+    boss = Object.assign({}, bdef, {
+      hp: bhp2, maxHp: bhp2,
+      x: x - 330, y: GROUND, face: -1, t: 0, state: 'charge', stateT: 0,
+      vx: 0, flinch: 0, intro: false, ballA: 0, dumpA: 0, swingT: 0
+    });
+  }
   x += lm.w;
   worldEnd = x + 380;
   player.x = 150; player.y = GROUND; player.vx = 0; player.vy = 0;
@@ -493,6 +542,9 @@ function tryCrush(){
   for(const bd of birds){
     if(Math.hypot(bd.x - jx, bd.y - jy) < 60 * S){ bd.hp = 0; hitAny = true; }
   }
+  if(boss && boss.intro && circleRect(jx, jy, 58 * S, boss.x - boss.bw / 2, GROUND - boss.bh, boss.bw, boss.bh)){
+    damageBoss(8 * MUL, jx, jy); hitAny = true;
+  }
   if(hitAny){ addSp(5); rubble(jx, jy, 5); heartsBurst(jx, jy, 3, 70); }
 }
 
@@ -504,6 +556,7 @@ function trySpecial(){
   p.beamTime = 8.5;            // 必殺発動中＋発動後はハートビーム解放！
   for(const b of buildings) b._sp = false;
   for(const s of sups) s._sp = false;
+  if(boss) boss._sp = false;
   sfxSpecial();
   shake = 18;
 }
@@ -644,6 +697,15 @@ function update(dt, raw){
         break;
       }
     }
+    // ボスにも体当たり
+    if(boss && boss.intro && p.ramCd <= 0 &&
+       Math.abs(p.x - boss.x) < boss.bw / 2 + 45 * S && p.y > GROUND - boss.bh + 12){
+      p.ramCd = 0.3;
+      damageBoss(6 * MUL, p.x + Math.sign(p.vx) * 40, GROUND - 60);
+      p.vx *= -0.5;
+      shake = Math.max(shake, 6);
+      addSp(3);
+    }
   }
 
   // --- 旋回体の向き ---
@@ -667,12 +729,13 @@ function update(dt, raw){
   if(firing){
     beamSoundOn();
     const ca = Math.cos(t.a2), sa = Math.sin(t.a2);
-    let endX = muzX, endY = muzY, hitB = null, hitS = null;
+    let endX = muzX, endY = muzY, hitB = null, hitS = null, hitBoss = null;
     const MAXLEN = 540 * S * (p.armMul || 1);
     outer:
     for(let s = 0; s <= MAXLEN; s += 7){
       endX = muzX + ca * s; endY = muzY + sa * s;
       if(endY > GROUND + 2) break;
+      if(boss && boss.intro && Math.abs(endX - boss.x) < boss.bw / 2 && endY > GROUND - boss.bh){ hitBoss = boss; break outer; }
       for(const b of buildings){
         if(b.destroyed) continue;
         if(endX > b.x && endX < b.x + b.w && endY > GROUND - b.h){ hitB = b; break outer; }
@@ -683,7 +746,11 @@ function update(dt, raw){
       }
     }
     beamRay = { x1: muzX, y1: muzY, x2: endX, y2: endY };
-    if(hitB){
+    if(hitBoss){
+      damageBoss(40 * MUL * dt, endX, endY, true);
+      if(Math.random() < dt * 45) heartsBurst(endX, endY, 2, 80);
+      if(Math.random() < dt * 14) sparks(endX, endY, 3, '#ffd24d');
+    }else if(hitB){
       damageBuilding(hitB, 32 * MUL * dt, endX, endY, true);
       if(Math.random() < dt * 45) heartsBurst(endX, endY, 2, 80);
       if(Math.random() < dt * 10) rubble(endX, endY, 1);
@@ -729,6 +796,10 @@ function update(dt, raw){
       if(s.state === 'soothed' || s.state === 'smacked' || s._sp) continue;
       if(Math.abs(s.x - spFx.x) < r){ s._sp = true; s.hp = 0; }
     }
+    if(boss && boss.intro && !boss._sp && Math.abs(boss.x - spFx.x) < r){
+      boss._sp = true;
+      damageBoss(30 + stage * 2, boss.x, GROUND - 60);
+    }
     for(let i = angerShots.length - 1; i >= 0; i--){
       if(Math.abs(angerShots[i].x - spFx.x) < r){
         heartsBurst(angerShots[i].x, angerShots[i].y, 4, 70);
@@ -761,6 +832,10 @@ function update(dt, raw){
       if(s.state === 'soothed' || s.state === 'smacked') continue;
       if(Math.abs(s.x - gWave.x) <= gWave.r) smackSup(s, Math.sign(s.x - gWave.x) || 1);
     }
+    if(boss && !boss._gw && Math.abs(boss.x - gWave.x) <= gWave.r){
+      boss._gw = true;
+      damageBoss(45, boss.x, GROUND - 60);
+    }
     dust(gWave.x + gWave.r, GROUND, 2, '#c4b6a0', 90);
     dust(gWave.x - gWave.r, GROUND, 2, '#c4b6a0', 90);
     if(Math.random() < raw * 30) rubble(gWave.x + (Math.random() < 0.5 ? 1 : -1) * gWave.r, GROUND - 5, 2);
@@ -770,9 +845,9 @@ function update(dt, raw){
   // --- 監督（元請けの怒り） ---
   if(state === 'play'){
     supTimer -= dt;
-    const maxSups = Math.min(6, 1 + Math.ceil(stage * 0.6));
+    const maxSups = Math.min(diff >= 3 ? 12 : 8, Math.round((1 + Math.ceil(stage * 0.6)) * DIFFS[diff].enemy));
     if(supTimer <= 0 && sups.filter(s => s.state === 'walk' || s.state === 'throw' || s.state === 'yell').length < maxSups){
-      supTimer = rnd(3.2, 6) / (1 + stage * 0.12);
+      supTimer = rnd(3.2, 6) / ((1 + stage * 0.12) * (0.6 + 0.4 * DIFFS[diff].enemy));
       spawnSup();
     }
   }
@@ -874,17 +949,21 @@ function update(dt, raw){
     if(e.y > GROUND) dust(e.x, GROUND, 2, '#c98', 30);
     if(!dead && p.inv <= 0 && !opFx &&
        e.x > p.x - 40 * S && e.x < p.x + 40 * S && e.y > p.y - 80 * S && e.y < p.y){
-      hurtPlayer(8); dead = true;
+      hurtPlayer(e.dmg || 8); dead = true;
     }
     if(dead) angerShots.splice(i, 1);
   }
 
+  // --- 建機ボス＆応援重機 ---
+  if(boss && state === 'play') updateBoss(dt);
+  if(allies.length) updateAllies(dt);
+
   // --- カラスの襲来（ステージ3以降） ---
   if(state === 'play' && stage >= 3){
     birdTimer -= dt;
-    const maxBirds = Math.min(4, Math.floor((stage - 1) / 2));
+    const maxBirds = Math.min(diff >= 3 ? 9 : 6, Math.round(Math.floor((stage - 1) / 2) * DIFFS[diff].enemy));
     if(birdTimer <= 0 && birds.length < maxBirds){
-      birdTimer = rnd(3.5, 7) / (1 + stage * 0.08);
+      birdTimer = rnd(3.5, 7) / ((1 + stage * 0.08) * (0.6 + 0.4 * DIFFS[diff].enemy));
       const side = Math.random() < 0.5 ? -1 : 1;
       birds.push({ x: side === -1 ? camX - 40 : camX + W + 40, y: rnd(50, 170),
                    vx: -side * (120 + stage * 10), t: rnd(0, 6), hp: 2, poopCd: rnd(0.8, 2) });
@@ -1027,8 +1106,8 @@ function update(dt, raw){
   }
   for(const b of buildings) if(b.shakeT > 0) b.shakeT -= dt;
 
-  // --- クリア判定 ---
-  if(state === 'play' && buildings.every(b => b.destroyed)){
+  // --- クリア判定（ビル全壊＋ボス撃破） ---
+  if(state === 'play' && !boss && buildings.every(b => b.destroyed)){
     state = 'clear'; stateTimer = 2.6; sfxClear();
     beamSoundOff();
     for(let k = 0; k < 14; k++) heartFall(camX + rnd(0, W), -rnd(0, 120));
@@ -1106,6 +1185,11 @@ function updateOp(raw){
           damageBuilding(b, 9999, clamp(ix, b.x, b.x + b.w), GROUND - 40);
         }
       }
+      // ボスにも超ダメージ
+      if(boss){
+        boss._gw = false;
+        if(Math.abs(boss.x - ix) < 260) damageBoss(130, boss.x, GROUND - 60);
+      }
       for(const s of sups){
         if(s.state === 'soothed' || s.state === 'smacked') continue;
         if(Math.abs(s.x - ix) < 200) smackSup(s, o.face);
@@ -1149,10 +1233,345 @@ function smackSup(s, dir){
   addKill();
 }
 
+// ---------- 建機ボス ----------
+function bossForStage(n){
+  if(n === 2)  return { kind: 'dozer',  name: 'ドーザー番長',     hp: 60,  bw: 150, bh: 86 };
+  if(n === 4)  return { kind: 'dump',   name: 'ダンプ大王',       hp: 95,  bw: 180, bh: 95 };
+  if(n === 6)  return { kind: 'crane',  name: 'ミスター鉄球',     hp: 130, bw: 130, bh: 170 };
+  if(n === 8)  return { kind: 'shovel', name: '黒鋼ショベル',     hp: 165, bw: 150, bh: 120 };
+  if(n === 10) return { kind: 'king',   name: '魔王クラッシャー', hp: 240, bw: 200, bh: 160 };
+  return null;
+}
+function updateBoss(dt){
+  const b = boss, p = player;
+  b.t += dt;
+  if(b.flinch > 0) b.flinch -= dt;
+  const dx = p.x - b.x, adx = Math.abs(dx);
+  if(!b.intro){
+    if(adx < 560){
+      b.intro = true;
+      addBubble(b.x, GROUND - 140, b.name + '、見参！！');
+      shake = Math.max(shake, 9);
+      sfxBoom(false);
+    }else return;
+  }
+  b.face = Math.sign(dx) || 1;
+  if(b.kind === 'dozer'){
+    // 突進→ひと休み の繰り返し
+    if(b.state !== 'turn'){
+      b.vx = lerp(b.vx, b.face * (235 + diff * 45 + stage * 5), Math.min(1, dt * 2));
+      b.x += b.vx * dt;
+      if(Math.random() < dt * 9) dust(b.x - Math.sign(b.vx) * 75, GROUND, 1, '#c4b6a0', 50);
+      if(adx < 75 && p.inv <= 0 && p.y > GROUND - 90){
+        hurtPlayer(12);
+        p.vx = b.face * 430; p.vy = -220; p.onGround = false;
+      }
+      b.stateT += dt;
+      if(b.stateT > 2.6){ b.state = 'turn'; b.stateT = 0; }
+    }else{
+      b.vx = 0; b.stateT += dt;
+      if(Math.random() < dt * 6) smoke(b.x - b.face * 55, GROUND - 70, true);
+      if(b.stateT > 1.0){ b.state = 'charge'; b.stateT = 0; }
+    }
+  }else if(b.kind === 'dump'){
+    // 距離を取りつつ荷台から岩を投げ落とす
+    if(adx < 270) b.x -= b.face * 120 * dt;
+    else if(adx > 430) b.x += b.face * 135 * dt;
+    b.stateT += dt;
+    b.dumpA = Math.max(0, b.dumpA - dt * 2);
+    if(b.stateT > 2.7 - diff * 0.4){
+      b.stateT = 0; b.dumpA = 0.8;
+      sfxClank();
+      for(let k = 0; k < 3 + diff; k++){
+        angerShots.push({ x: b.x - b.face * 45, y: GROUND - 95,
+          vx: b.face * rnd(0.6, 1.1) * adx * 0.9, vy: rnd(-440, -310),
+          rot: rnd(0, 6), rock: true, dmg: 10 });
+      }
+    }
+  }else if(b.kind === 'crane'){
+    // 鉄球の振り子！本体を攻撃しよう
+    if(adx > 300) b.x += b.face * 45 * dt;
+    b.ballA = Math.sin(b.t * (1.2 + diff * 0.15)) * 1.05;
+    const tipX = b.x + b.face * 26, tipY = GROUND - b.bh + 14;
+    b.ballX = tipX + Math.sin(b.ballA) * 132;
+    b.ballY = tipY + Math.cos(b.ballA) * 132;
+    if(p.inv <= 0 && Math.hypot(p.x - b.ballX, (p.y - 45) - b.ballY) < 36 + 30 * (p.scl || 1)){
+      hurtPlayer(14);
+      p.vx = Math.sign(p.x - b.ballX) * 470; p.vy = -260; p.onGround = false;
+    }
+  }else{
+    // 黒鋼ショベル／魔王クラッシャー
+    const big = b.kind === 'king';
+    if(adx > (big ? 210 : 175)) b.x += b.face * (big ? 100 : 72) * dt;
+    b.stateT += dt;
+    if(b.swingT > 0) b.swingT -= dt;
+    const cyc = (big ? 2.1 : 2.7) - diff * 0.3;
+    if(b.stateT > cyc){
+      b.stateT = 0;
+      if(adx < (big ? 250 : 205)){
+        b.swingT = 0.45;
+        shake = Math.max(shake, 9);
+        dust(b.x + b.face * 130, GROUND, 9, '#cbbfae', 95);
+        sfxCrush();
+        if(p.inv <= 0 && adx < (big ? 250 : 205) && p.y > GROUND - 100){
+          hurtPlayer(12); p.vx = b.face * 390;
+        }
+      }else{
+        sfxClank();
+        const n = big ? 3 : 2;
+        for(let k = 0; k < n; k++){
+          const a = Math.atan2((p.y - 50) - (GROUND - 120), dx) + (k - (n - 1) / 2) * 0.17;
+          const sp = 300 + diff * 45;
+          angerShots.push({ x: b.x + b.face * 85, y: GROUND - 120,
+            vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 60, rot: rnd(0, 6), rock: true, dmg: 10 });
+        }
+      }
+    }
+  }
+  b.x = clamp(b.x, 80, worldEnd - 80);
+}
+function damageBoss(d, hx, hy, quiet){
+  if(!boss || !boss.intro) return;
+  boss.hp -= d; boss.flinch = 0.15;
+  if(!quiet){ sparks(hx || boss.x, hy || (GROUND - 60), 6, '#ffd24d'); sfxClank(); }
+  if(boss.hp <= 0){
+    const b = boss; boss = null;
+    sfxBoom(true); shake = Math.max(shake, 20);
+    rubble(b.x, GROUND - 50, 30);
+    sparks(b.x, GROUND - 60, 24, '#ffd24d');
+    stars(b.x, GROUND - 70, 14);
+    dust(b.x, GROUND - 30, 18, '#999', 120);
+    heartsBurst(b.x, GROUND - 60, 16, 150);
+    addScore(2500 + stage * 250, b.x, GROUND - 120);
+    addText(b.x, GROUND - 152, b.name + 'を解体！！', '#ffe14d', true);
+    // ボスは必ず応援無線機を落とす
+    pickups.push({ type: 'radio', x: b.x, y: GROUND - 60, vx: rnd(-30, 30), vy: -180, life: 12, grounded: false });
+    addSp(25);
+    addKill();
+  }
+}
+function hazard(x, y, w2, h2){
+  // 黄黒の警戒ストライプ
+  cx.save();
+  roundRect(x, y, w2, h2, 3); cx.clip();
+  for(let i = -1; i < w2 / 12 + 2; i++){
+    cx.fillStyle = i % 2 ? '#ffce3a' : '#2a2a30';
+    cx.save(); cx.translate(x + i * 12, y); cx.rotate(0.5);
+    cx.fillRect(0, -8, 8, h2 + 18);
+    cx.restore();
+  }
+  cx.restore();
+}
+function drawBoss(b){
+  cx.save();
+  const fl = b.flinch > 0 ? rnd(-3, 3) : 0;
+  cx.translate(b.x + fl, GROUND);
+  cx.fillStyle = 'rgba(0,0,0,.2)';
+  cx.beginPath(); cx.ellipse(0, 5, b.bw * 0.55, 9, 0, 0, 7); cx.fill();
+  cx.save();
+  cx.scale(b.face, 1);   // 右向き基準
+  if(b.kind === 'dozer'){
+    cx.fillStyle = '#3a3a42';
+    roundRect(-66, -28, 132, 28, 13); cx.fill();
+    cx.fillStyle = '#55555e';
+    for(let i = 0; i < 5; i++){ cx.beginPath(); cx.arc(-48 + i * 24, -14, 7, 0, 7); cx.fill(); }
+    cx.fillStyle = '#4a4a50';
+    roundRect(-58, -62, 100, 36, 6); cx.fill();
+    hazard(-58, -36, 100, 9);
+    cx.fillStyle = '#2e2e36';
+    roundRect(-26, -90, 46, 30, 5); cx.fill();
+    cx.fillStyle = '#9fb8c8';
+    roundRect(-21, -86, 36, 16, 3); cx.fill();
+    cx.fillStyle = '#3a3a42';
+    cx.fillRect(-50, -76, 7, 16);
+    // 巨大ブレード
+    cx.fillStyle = '#8a8a92';
+    cx.beginPath();
+    cx.moveTo(46, -64); cx.quadraticCurveTo(72, -52, 72, -2);
+    cx.lineTo(50, -2); cx.lineTo(46, -40);
+    cx.closePath(); cx.fill();
+    cx.strokeStyle = '#5a5a62'; cx.lineWidth = 3;
+    cx.beginPath(); cx.moveTo(50, -54); cx.lineTo(68, -44); cx.stroke();
+    cx.strokeStyle = '#4a4a52'; cx.lineWidth = 6;
+    cx.beginPath(); cx.moveTo(30, -34); cx.lineTo(54, -30); cx.stroke();
+  }else if(b.kind === 'dump'){
+    cx.fillStyle = '#3a3a42';
+    for(const wx of [-58, -20, 44]){ cx.beginPath(); cx.arc(wx, -14, 15, 0, 7); cx.fill(); }
+    cx.fillStyle = '#888';
+    for(const wx of [-58, -20, 44]){ cx.beginPath(); cx.arc(wx, -14, 6, 0, 7); cx.fill(); }
+    cx.fillStyle = '#4a4a50';
+    cx.fillRect(-84, -34, 168, 10);
+    // キャブ（前方）
+    cx.fillStyle = '#5a5a64';
+    roundRect(48, -70, 38, 40, 5); cx.fill();
+    cx.fillStyle = '#9fb8c8';
+    roundRect(52, -66, 24, 16, 3); cx.fill();
+    hazard(48, -38, 38, 8);
+    // 荷台（傾いて岩を投げる）
+    cx.save();
+    cx.translate(40, -34);
+    cx.rotate((b.dumpA || 0) * 0.6);
+    cx.fillStyle = '#5a5a64';
+    cx.beginPath();
+    cx.moveTo(0, 0); cx.lineTo(-128, 0); cx.lineTo(-122, -38); cx.lineTo(-6, -30);
+    cx.closePath(); cx.fill();
+    cx.strokeStyle = '#3a3a42'; cx.lineWidth = 2.5; cx.stroke();
+    cx.fillStyle = '#8a8478';
+    for(let i = 0; i < 4; i++){ cx.beginPath(); cx.arc(-30 - i * 24, -30, 8, 0, 7); cx.fill(); }
+    cx.restore();
+  }else if(b.kind === 'crane'){
+    cx.fillStyle = '#3a3a42';
+    roundRect(-56, -26, 112, 26, 12); cx.fill();
+    cx.fillStyle = '#55555e';
+    for(let i = 0; i < 4; i++){ cx.beginPath(); cx.arc(-39 + i * 26, -13, 7, 0, 7); cx.fill(); }
+    cx.fillStyle = '#4a4a50';
+    roundRect(-48, -60, 78, 34, 6); cx.fill();
+    hazard(-48, -34, 78, 8);
+    cx.fillStyle = '#2e2e36';
+    roundRect(2, -84, 34, 26, 5); cx.fill();
+    cx.fillStyle = '#9fb8c8';
+    roundRect(6, -80, 24, 13, 3); cx.fill();
+    // ラチスブーム
+    cx.strokeStyle = '#c8a030'; cx.lineWidth = 7;
+    cx.beginPath(); cx.moveTo(-8, -54); cx.lineTo(26, -(b.bh - 14)); cx.stroke();
+    cx.strokeStyle = '#a8861f'; cx.lineWidth = 2;
+    for(let i = 1; i < 7; i++){
+      const t2 = i / 7;
+      cx.beginPath();
+      cx.moveTo(lerp(-8, 26, t2) - 5, lerp(-54, -(b.bh - 14), t2) + 5);
+      cx.lineTo(lerp(-8, 26, t2) + 5, lerp(-54, -(b.bh - 14), t2) - 5);
+      cx.stroke();
+    }
+  }else{
+    // 黒鋼ショベル／魔王クラッシャー（黒い重機）
+    const big = b.kind === 'king';
+    const k2 = big ? 1.35 : 1;
+    cx.scale(k2, k2);
+    cx.fillStyle = '#26262e';
+    roundRect(-58, -28, 116, 28, 13); cx.fill();
+    cx.fillStyle = '#44444e';
+    for(let i = 0; i < 4; i++){ cx.beginPath(); cx.arc(-40 + i * 26, -14, 7, 0, 7); cx.fill(); }
+    cx.fillStyle = '#32323a';
+    roundRect(-60, -66, 102, 38, 7); cx.fill();
+    hazard(-60, -38, 102, 9);
+    cx.fillStyle = '#1e1e26';
+    roundRect(2, -98, 38, 40, 6); cx.fill();
+    cx.fillStyle = big ? '#e84040' : '#9fb8c8';
+    roundRect(6, -94, 26, 18, 3); cx.fill();
+    // 黒いアーム＋爪（振り下ろしモーション）
+    const sw2 = b.swingT > 0 ? Math.sin((0.45 - b.swingT) / 0.45 * Math.PI) * 0.55 : 0;
+    cx.strokeStyle = '#26262e'; cx.lineWidth = 15; cx.lineCap = 'round';
+    const e1x = 60, e1y = -110 + sw2 * 40;
+    cx.beginPath(); cx.moveTo(14, -62); cx.lineTo(e1x, e1y); cx.stroke();
+    cx.lineWidth = 11;
+    const e2x = 112, e2y = -44 + sw2 * 55;
+    cx.beginPath(); cx.moveTo(e1x, e1y); cx.lineTo(e2x, e2y); cx.stroke();
+    cx.fillStyle = '#1a1a22';
+    cx.beginPath();
+    cx.moveTo(e2x - 6, e2y - 8);
+    cx.quadraticCurveTo(e2x + 32, e2y - 4, e2x + 24, e2y + 26);
+    cx.lineTo(e2x + 10, e2y + 18);
+    cx.lineTo(e2x + 16, e2y + 2);
+    cx.lineTo(e2x - 2, e2y + 8);
+    cx.closePath(); cx.fill();
+    if(big){
+      cx.fillStyle = '#e84040';
+      cx.beginPath(); cx.arc(21, -88, 3.4, 0, 7); cx.fill();   // 赤いランプ
+    }
+  }
+  cx.restore();
+  cx.restore();
+  // クレーンの鉄球（ワールド座標）
+  if(b.kind === 'crane' && b.ballX !== undefined){
+    cx.strokeStyle = '#555'; cx.lineWidth = 3;
+    cx.beginPath();
+    cx.moveTo(b.x + b.face * 26, GROUND - b.bh + 14);
+    cx.lineTo(b.ballX, b.ballY);
+    cx.stroke();
+    const g = cx.createRadialGradient(b.ballX - 6, b.ballY - 6, 2, b.ballX, b.ballY, 24);
+    g.addColorStop(0, '#7a7a84'); g.addColorStop(1, '#2a2a32');
+    cx.fillStyle = g;
+    cx.beginPath(); cx.arc(b.ballX, b.ballY, 24, 0, 7); cx.fill();
+  }
+}
+
+// ---------- 応援のピンク重機（応援無線機） ----------
+function spawnAllies(){
+  for(let i = 0; i < 3; i++){
+    allies.push({
+      x: camX - 60 - i * 95, y: GROUND, vx: 0, vy: 0,
+      facing: 1, turn: 1, tx: 400, ty: 300, scl: 0.6, armMul: 1,
+      pitch: 0, tread: 0, jaw: 0.2, inv: 0, smokeT: rnd(0, 0.3), heartT: 0,
+      crushT: 0, biteCd: rnd(0.4, 1.2), life: 16 + i * 1.5, empty: false
+    });
+  }
+  addText(player.x, player.y - 150, '📻 仲間のピンク重機が応援に来た！！', '#ffe14d', true);
+  sfxClear();
+}
+function updateAllies(dt){
+  for(let i = allies.length - 1; i >= 0; i--){
+    const a = allies[i];
+    a.life -= dt;
+    if(a.life <= 0 || (a.life < 2.5 && a.x < camX - 200)){
+      heartsBurst(a.x, a.y - 50, 8, 80);
+      allies.splice(i, 1);
+      continue;
+    }
+    // ターゲット（ボス＞監督＞ビル の近い順）
+    let tx = null, ty = GROUND - 60, kind = null, ref = null, bd2 = 1e9;
+    const cand = [];
+    if(boss && boss.intro) cand.push({ x: boss.x, y: GROUND - boss.bh * 0.5, k: 'boss', ref: boss });
+    for(const s of sups){
+      if(s.state === 'walk' || s.state === 'throw' || s.state === 'yell')
+        cand.push({ x: s.x, y: s.y - 40, k: 'sup', ref: s });
+    }
+    for(const b of buildings){
+      if(!b.destroyed) cand.push({ x: b.x + b.w / 2, y: GROUND - Math.min(b.h * 0.5, 80), k: 'bld', ref: b });
+    }
+    for(const c of cand){
+      const d = Math.abs(c.x - a.x);
+      if(d < bd2){ bd2 = d; tx = c.x; ty = c.y; kind = c.k; ref = c.ref; }
+    }
+    if(a.life < 2.5){
+      // 「ほな帰るわ〜」
+      a.vx = lerp(a.vx, -240, Math.min(1, dt * 3));
+      a.x += a.vx * dt;
+      a.facing = -1;
+      if(Math.random() < dt * 4) heartDrift(a.x, a.y - 60);
+    }else if(tx !== null){
+      const dir = Math.sign(tx - a.x) || 1;
+      const want = Math.abs(tx - a.x) > 105 ? dir * 175 : 0;
+      a.vx = lerp(a.vx, want, Math.min(1, dt * 3));
+      a.x += a.vx * dt;
+      if(want !== 0) a.facing = dir;
+      a.tx = tx; a.ty = ty;
+      a.biteCd -= dt;
+      if(a.biteCd <= 0 && Math.abs(tx - a.x) < 150){
+        a.biteCd = 0.85;
+        a.crushT = 0.25;
+        const t2 = ik(a);
+        const jx = t2.tx + Math.cos(t2.a2) * 30, jy = t2.ty + Math.sin(t2.a2) * 30;
+        rubble(jx, jy, 2); heartsBurst(jx, jy, 2, 50); sfxClank();
+        if(kind === 'bld') damageBuilding(ref, 5, jx, jy, true);
+        else if(kind === 'sup'){ ref.hp -= 5; ref.flinch = 0.2; }
+        else damageBoss(5, jx, jy, true);
+      }
+    }
+    a.turn = lerp(a.turn, a.facing, Math.min(1, dt * 5));
+    a.tread += a.vx * dt;
+    let jt = 0.2;
+    if(a.crushT > 0){ jt = a.crushT > 0.13 ? 0.5 : 0.04; a.crushT -= dt; }
+    a.jaw = lerp(a.jaw, jt, Math.min(1, dt * 14));
+    a.smokeT -= dt;
+    if(a.smokeT <= 0){ a.smokeT = 0.3; smoke(a.x - a.turn * 22, a.y - 46, Math.abs(a.vx) > 50); }
+  }
+}
+
 // ---------- お宝（捨て猫・人骨・お札） ----------
 function spawnPickup(x, y){
   const r = Math.random();
-  const type = r < 0.5 ? 'cat' : r < 0.82 ? 'bone' : 'fuda';
+  // 応援無線機はレア！
+  const type = r < 0.10 ? 'radio' : r < 0.52 ? 'cat' : r < 0.82 ? 'bone' : 'fuda';
   pickups.push({ type, x, y, vx: rnd(-40, 40), vy: -180, life: 9, grounded: false });
 }
 function collectPickup(q){
@@ -1167,6 +1586,11 @@ function collectPickup(q){
     addText(q.x, q.y - 70, '人の骨！？…出土品として届けた', '#fff', true);
     stars(q.x, q.y - 30, 8);
     sfxClank();
+  }else if(q.type === 'radio'){
+    addScore(500, q.x, q.y - 40);
+    addText(q.x, q.y - 70, '📻 応援無線機！『おーい、応援頼むわ〜！』', '#ffe14d', true);
+    sfxWhistle();
+    spawnAllies();
   }else{
     addScore(1500, q.x, q.y - 40);
     addText(q.x, q.y - 70, '古いお札…なにかついてきた…？', '#c8b8e8', true);
@@ -1194,7 +1618,7 @@ function saveRankEntry(){
     let name = '';
     try{ name = prompt('🏆 ランクイン！名前を入力してください：', '解体王') || ''; }catch(e){}
     name = (name.trim() || '名無しの解体王').slice(0, 10);
-    r.push({ name, score, stage });
+    r.push({ name, score, stage, mode: diff });
     r.sort((a, b) => b.score - a.score);
     r = r.slice(0, 5);
     localStorage.setItem('kikukenRank', JSON.stringify(r));
@@ -1233,11 +1657,12 @@ function spawnSup(){
   let x = side === -1 ? camX - 50 : camX + W + 50;
   x = clamp(x, 30, worldEnd - 30);
   const type = (stage >= 2 && Math.random() < 0.35) ? 1 : 0;
+  const shp = Math.round((type === 1 ? 18 : 9) * DIFFS[diff].ehp);
   sups.push({
     x, y: GROUND, type,
     scale: type === 1 ? 1.25 : 1,
-    hp: type === 1 ? 18 : 9,
-    maxHp: type === 1 ? 18 : 9,
+    hp: shp,
+    maxHp: shp,
     t: rnd(0, 6), face: 1, state: 'walk', stateT: 0,
     range: rnd(230, 330), atkCd: rnd(0.8, 1.6),
     flinch: 0, thrown: false, yelled: false, sootheT: 0, spin: 0
@@ -1245,6 +1670,7 @@ function spawnSup(){
 }
 
 function hurtPlayer(dmg){
+  dmg = Math.round(dmg * DIFFS[diff].dmg);   // 難易度で被ダメージ増
   player.hp -= dmg; player.inv = 1.0;
   player.guts = clamp(player.guts + 8, 0, 100);   // 殴られるほど漢気が滾る
   sfxHurt(); shake = Math.max(shake, 8);
@@ -1377,6 +1803,8 @@ function draw(){
 
   for(const b of buildings) drawBuilding(b);
   for(const q of pickups) drawPickup(q);
+  if(boss) drawBoss(boss);
+  for(const al of allies) drawExcavator(al);
   for(const s of sups) drawSup(s);
   if(sprayer) drawSprayer(sprayer);
   for(const bd of birds) drawBird(bd);
@@ -1389,7 +1817,16 @@ function draw(){
   // オペレーター
   if(opFx) drawOperator(opFx.x, opFx.y, opFx.face, opFx.phase, opFx.t);
 
-  for(const e of angerShots) drawAnger(e.x, e.y, 10, e.rot);
+  for(const e of angerShots){
+    if(e.rock){
+      cx.save(); cx.translate(e.x, e.y); cx.rotate(e.rot);
+      cx.fillStyle = '#8a8478';
+      cx.fillRect(-8, -7, 16, 13);
+      cx.fillStyle = '#6e695f';
+      cx.fillRect(-4, -7, 7, 5);
+      cx.restore();
+    }else drawAnger(e.x, e.y, 10, e.rot);
+  }
 
   // 地震波
   if(gWave){
@@ -1521,7 +1958,7 @@ function draw(){
     }
     r.forEach((e, i) => {
       cx.fillStyle = i === 0 ? '#ffe14d' : '#fff';
-      cx.fillText((i + 1) + '位　' + e.name + '　' + e.score + '点（STAGE ' + e.stage + '）', W/2, H/2 + 2 + i * 24);
+      cx.fillText((i + 1) + '位　' + e.name + '　' + e.score + '点（S' + e.stage + '・' + DIFFS[e.mode || 0].name + '）', W/2, H/2 + 2 + i * 24);
     });
     cx.fillStyle = '#fff';
     cx.font = '18px ' + FONT;
@@ -2826,6 +3263,23 @@ function drawPickup(q){
     cx.beginPath(); cx.arc(12, -14, 4, 0, 7); cx.fill();
     cx.beginPath(); cx.arc(12, -9, 4, 0, 7); cx.fill();
     cx.restore();
+  }else if(q.type === 'radio'){
+    // 応援無線機（トランシーバー）
+    cx.fillStyle = '#3a3a44';
+    roundRect(-8, -28, 16, 28, 4); cx.fill();
+    cx.strokeStyle = '#222'; cx.lineWidth = 1.5;
+    roundRect(-8, -28, 16, 28, 4); cx.stroke();
+    cx.strokeStyle = '#3a3a44'; cx.lineWidth = 2.5;
+    cx.beginPath(); cx.moveTo(-4, -28); cx.lineTo(-4, -40); cx.stroke();   // アンテナ
+    cx.fillStyle = PINK;
+    cx.fillRect(-5, -24, 10, 6);                                           // ピンクのスピーカー
+    cx.fillStyle = '#7ad36b';
+    cx.beginPath(); cx.arc(3, -12, 2, 0, 7); cx.fill();                    // ランプ
+    // 電波マーク
+    cx.strokeStyle = '#ffe14d'; cx.lineWidth = 1.5;
+    for(let i = 1; i < 3; i++){
+      cx.beginPath(); cx.arc(-4, -40, i * 5, -2.2, -0.9); cx.stroke();
+    }
   }else{
     // お札
     cx.fillStyle = '#f8f4e8';
@@ -2944,10 +3398,28 @@ function drawHUD(){
   cx.textAlign = 'center';
   cx.font = 'bold 17px ' + FONT;
   cx.strokeStyle = 'rgba(0,0,0,.45)'; cx.lineWidth = 4;
-  const stTxt = 'STAGE ' + stage + '/' + MAX_STAGE + ' ' + WICON[weather] + '　残り ' + remain + ' 棟';
+  const stTxt = 'STAGE ' + stage + '/' + MAX_STAGE + ' ' + WICON[weather] + '　残り ' + remain + ' 棟　【' + DIFFS[diff].name + '】';
   cx.strokeText(stTxt, W/2, 32);
   cx.fillStyle = '#fff';
   cx.fillText(stTxt, W/2, 32);
+  // ボスHPバー
+  if(boss && boss.intro){
+    cx.fillStyle = 'rgba(0,0,0,.5)';
+    roundRect(W/2 - 165, 42, 330, 24, 11); cx.fill();
+    cx.fillStyle = '#e84040';
+    roundRect(W/2 - 160, 46, 320 * clamp(boss.hp / boss.maxHp, 0, 1), 16, 8); cx.fill();
+    cx.fillStyle = '#fff';
+    cx.font = 'bold 12px ' + FONT;
+    cx.textAlign = 'center';
+    cx.fillText('⚠ ' + boss.name, W/2, 59);
+  }
+  // 応援駆けつけ中
+  if(allies.length){
+    cx.fillStyle = '#ffe14d';
+    cx.font = 'bold 13px ' + FONT;
+    cx.textAlign = 'left';
+    cx.fillText('📻 応援駆けつけ中！ ×' + allies.length, 16, 122);
+  }
   const next = buildings.find(b => !b.destroyed);
   if(next && (next.x > camX + W || next.x + next.w < camX)){
     const dir = next.x > camX + W ? 1 : -1;
@@ -3093,20 +3565,35 @@ function drawTitle(){
   cx.font = '12px ' + FONT;
   cx.fillText(touchMode && innerHeight > innerWidth ? '📱 スマホは横向きにすると遊びやすいです' : '※たまに散水職人が助けに来てくれる。建物からは…何か出るかも？', lx, 430);
 
+  // モード選択ボタン
   cx.textAlign = 'center';
   if(Math.floor(tGlobal * 1.6) % 2 === 0){
     cx.fillStyle = '#ffe14d';
-    cx.font = 'bold 26px ' + FONT;
-    cx.fillText(touchMode ? '▶ タップでスタート ◀' : '▶ クリックでスタート ◀', W/2, 482);
+    cx.font = 'bold 16px ' + FONT;
+    cx.fillText('▼ モードを選んでスタート！' + (touchMode ? '' : '（キー 1〜4 でもOK）') + ' ▼', W/2, 460);
+  }
+  const MODE_DESC = ['敵すくなめ', '敵1.5倍・痛さ1.5倍', '敵2倍・痛さ2倍', '敵4倍・痛さ4倍!?'];
+  for(let i = 0; i < MODE_BTNS.length; i++){
+    const mb = MODE_BTNS[i], d2 = DIFFS[i];
+    cx.fillStyle = 'rgba(0,0,0,.6)';
+    roundRect(mb.x, mb.y, mb.w, mb.h, 10); cx.fill();
+    cx.strokeStyle = d2.col; cx.lineWidth = 3;
+    roundRect(mb.x, mb.y, mb.w, mb.h, 10); cx.stroke();
+    cx.fillStyle = d2.col;
+    cx.font = 'bold 19px ' + FONT;
+    cx.fillText(d2.name, mb.x + mb.w/2, mb.y + 19);
+    cx.fillStyle = 'rgba(255,255,255,.85)';
+    cx.font = 'bold 10px ' + FONT;
+    cx.fillText(MODE_DESC[i], mb.x + mb.w/2, mb.y + 35);
   }
   // ランキングTOP3
   const r3 = loadRank().slice(0, 3);
   cx.fillStyle = 'rgba(255,255,255,.85)';
-  cx.font = 'bold 13px ' + FONT;
+  cx.font = 'bold 12px ' + FONT;
   if(r3.length > 0){
-    cx.fillText('🏆 ' + r3.map((e, i) => (i + 1) + '位 ' + e.name + ' ' + e.score).join('　／　'), W/2, 510);
+    cx.fillText('🏆 ' + r3.map((e, i) => (i + 1) + '位 ' + e.name + ' ' + e.score).join('　／　'), W/2, 530);
   }else{
-    cx.fillText('HI-SCORE: ' + hiscore, W/2, 510);
+    cx.fillText('HI-SCORE: ' + hiscore, W/2, 530);
   }
 }
 
