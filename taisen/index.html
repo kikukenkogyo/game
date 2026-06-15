@@ -114,20 +114,17 @@ addEventListener('keyup', e => { keys[e.code] = false; });
 
 // タッチボタン（移動＆ジャンプは左側／必殺は右側／噛みつきは画面タップ）
 const TB = {
-  left:    { x: 66,     y: H - 56,  r: 46, label: '◀' },
-  right:   { x: 178,    y: H - 56,  r: 46, label: '▶' },
-  jump:    { x: 122,    y: H - 150, r: 40, label: '▲' },
-  special: { x: W - 84, y: H - 70,  r: 52, label: '🔥' },  // 瀕死のときだけ出現
+  left:    { x: 66,      y: H - 56, r: 46, label: '◀' },
+  right:   { x: 178,     y: H - 56, r: 46, label: '▶' },
+  jump:    { x: W - 178, y: H - 56, r: 46, label: '▲' },
+  missile: { x: W - 66,  y: H - 56, r: 50, label: '🚀' },
 };
 let touchMode = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
 const touchHit = {};
 let biteLatch = 0;   // タップで噛む（短時間ラッチして確実に入力に乗せる）
 function tpos(t){ const r = cv.getBoundingClientRect(); return { x:(t.clientX-r.left)*W/r.width, y:(t.clientY-r.top)*H/r.height }; }
 function btnAt(x,y){
-  for(const k in TB){
-    if(k === 'special' && !canSpecial(myPlayer())) continue;  // 必殺は使える時だけ反応
-    const b=TB[k]; if(Math.hypot(x-b.x,y-b.y)<=b.r+10) return k;
-  }
+  for(const k in TB){ const b=TB[k]; if(Math.hypot(x-b.x,y-b.y)<=b.r+10) return k; }
   return null;
 }
 cv.addEventListener('touchstart', e => {
@@ -167,17 +164,16 @@ function localInput(){
     left:  !!(keys['ArrowLeft']||keys['KeyA']||keys['T_left']),
     right: !!(keys['ArrowRight']||keys['KeyD']||keys['T_right']),
     jump:  !!(keys['ArrowUp']||keys['KeyW']||keys['T_jump']),
-    bite:  biteLatch > 0 || !!(keys['Space']||keys['KeyJ']),
-    special: !!(keys['KeyK']||keys['T_special']),
+    bite:  biteLatch > 0 || !!(keys['KeyK']),
+    missile: !!(keys['Space']||keys['KeyJ']||keys['T_missile']),
   };
 }
 function myPlayer(){ if(!S) return null; return net.isHost ? S.p1 : S.p2; }
-function canSpecial(pl){ return pl && pl.hp > 0 && pl.hp <= 30 && (pl.opCd||0) <= 0 && (pl.opT||0) <= 0; }
 
 // ---------- ネットワーク（PeerJS / ホスト権限方式） ----------
 const net = {
   peer: null, conn: null, isHost: false, connected: false,
-  remoteInput: { left:false, right:false, jump:false, bite:false, special:false },
+  remoteInput: { left:false, right:false, jump:false, bite:false, missile:false },
   netState: null, lastRecv: 0,
 };
 function randCode(){ let s=''; for(let i=0;i<4;i++) s += ALPHA[Math.floor(Math.random()*ALPHA.length)]; return s; }
@@ -230,7 +226,7 @@ function wireConn(){
   });
   c.on('data', d => {
     try{
-      if(d.t === 'i'){ net.remoteInput = { left:!!d.l, right:!!d.r, jump:!!d.j, bite:!!d.b, special:!!d.s }; }
+      if(d.t === 'i'){ net.remoteInput = { left:!!d.l, right:!!d.r, jump:!!d.j, bite:!!d.b, missile:!!d.m }; }
       else if(d.t === 's'){ net.netState = d.s; net.lastRecv = perfNow(); if(phase !== 'play' && !(S && S.over)) phase = 'play'; }
       else if(d.t === 'rs'){ if(!net.isHost){ applyServerStart(d); } }
       else if(d.t === 'bye'){ peerLost('相手が退出しました'); }
@@ -266,8 +262,9 @@ const CPU_PARAM = [
 function mkPlayer(x, face){
   return { x, y: GROUND, vx:0, vy:0, onGround:true, hp:100, facing:face,
            biteT:0, biteCd:0, ramCd:0, inv:0, hitFlash:0, jaw:0.2, tread:0, pitch:0,
-           gauge:0, chargeT:0, ready:false, opT:0, opCd:0, opSide:1, opHit:false,
-           _pFwd:false, _pSpecial:false, ai:null };
+           gauge:0, missCd:0, _pMissile:false,
+           spinT:0, spin:0, spinHitCd:0, lastDir:0, altCount:0, altT:0, _pLeft:false, _pRight:false,
+           ai:null };
 }
 function startMatch(){
   S = { p1: mkPlayer(ARENA_L + 130, 1), p2: mkPlayer(ARENA_R - 130, -1),
@@ -338,56 +335,49 @@ function hitPlayer(def, dir, dmg, fx, fxx, fxy){
   def.gauge = Math.min(100, def.gauge + 26);   // ダメージを受けると波動ゲージが溜まる
   fx.push({ x: fxx, y: fxy, t: 0, big: dmg >= 14 });
 }
-// 波動拳：ゲージ満タン→「後ろ（相手と逆）」で溜め（オーラ）→「前（相手側）」で発射
-function stepHadouken(pl, inp, dt){
+// ミサイル：ゲージ満タン＋「ミサイルボタン＋（◀/▶/ジャンプ）」同時押しで発射（テクニック要）
+function stepMissile(pl, inp, dt){
+  if(pl.missCd > 0) pl.missCd -= dt;
   const foe = pl === S.p1 ? S.p2 : S.p1;
-  const toFoe = Math.sign(foe.x - pl.x) || pl.facing || 1;   // 相手のいる向き
-  const backHeld = toFoe > 0 ? inp.left : inp.right;          // 相手と逆＝溜め
-  const fwdHeld  = toFoe > 0 ? inp.right : inp.left;          // 相手側＝発射
-  const full = pl.gauge >= 100;
-  if(!full){ pl.chargeT = 0; pl.ready = false; pl._pFwd = fwdHeld; return; }
-  if(pl.ready){
-    // 溜め完了は保持。前（相手側）の押し始めで発射
-    if(fwdHeld && !pl._pFwd){
-      pl.facing = toFoe;
-      S.waves.push({ x: pl.x + toFoe * 46, y: pl.y - 50, vx: toFoe * 460, owner: pl === S.p1 ? 1 : 2, t: 0 });
-      pl.gauge = 0; pl.chargeT = 0; pl.ready = false;
-      sfxBell();
-    }
-  }else{
-    if(backHeld && !fwdHeld && pl.opT <= 0) pl.chargeT = Math.min(1.2, pl.chargeT + dt);
-    else pl.chargeT = Math.max(0, pl.chargeT - dt * 2);
-    if(pl.chargeT >= 0.5) pl.ready = true;   // ここで完了をラッチ
-  }
-  pl._pFwd = fwdHeld;
-}
-// 必殺技：瀕死のときだけ伝説のオペレーター登場
-function stepSpecial(pl, def, inp, dt){
-  if(pl.opCd > 0) pl.opCd -= dt;
-  const specEdge = inp.special && !pl._pSpecial;
-  if(specEdge && canSpecial(pl)){
-    pl.opT = 1.3; pl.opCd = 4; pl.opHit = false;
-    pl.opSide = (def.x >= pl.x) ? 1 : -1;
-    pl.inv = Math.max(pl.inv, 1.3);
+  const toFoe = Math.sign(foe.x - pl.x) || pl.facing || 1;
+  const missEdge = inp.missile && !pl._pMissile;
+  if(missEdge && (inp.left || inp.right || inp.jump) && pl.gauge >= 100 && pl.missCd <= 0){
+    pl.facing = toFoe;
+    S.waves.push({ x: pl.x + toFoe * 50, y: pl.y - 52, vx: toFoe * 540, owner: pl === S.p1 ? 1 : 2, t: 0, missile: true });
+    pl.gauge = 0; pl.missCd = 0.5;
     sfxBell();
   }
-  if(pl.opT > 0){
-    pl.opT -= dt;
-    // 振り下ろしの瞬間に大ダメージ
-    if(!pl.opHit && pl.opT < 0.7){
-      pl.opHit = true;
-      const smashX = pl.x + pl.opSide * 130;
-      if(Math.abs(def.x - smashX) < 150 && def.inv <= 0.6){
-        const dir = pl.opSide;
-        def.hp = Math.max(0, def.hp - 34);
-        def.inv = 0.8; def.hitFlash = 0.4;
-        def.vx = dir * 460; def.vy = -260; def.onGround = false;
-        S.fx.push({ x: smashX, y: GROUND - 40, t: 0, big: true });
-      }
-      shake = 24;
+  pl._pMissile = inp.missile;
+}
+// 旋回コマンド：◀▶を素早く交互に8回（▷◁×4）で5秒間スピン状態
+function stepSpin(pl, inp, dt){
+  if(pl.spinT > 0){ pl.spinT -= dt; pl.spin += dt * 17; }
+  pl.altT += dt;
+  if(pl.altT > 0.55){ pl.altCount = 0; pl.lastDir = 0; }   // 間が空いたらリセット
+  let dir = 0;
+  if(inp.left && !pl._pLeft) dir = -1;
+  else if(inp.right && !pl._pRight) dir = 1;
+  if(dir !== 0){
+    if(pl.lastDir !== 0 && dir !== pl.lastDir) pl.altCount++;
+    else pl.altCount = 1;
+    pl.lastDir = dir; pl.altT = 0;
+    if(pl.altCount >= 8 && pl.spinT <= 0){
+      pl.spinT = 5; pl.spin = 0; pl.altCount = 0;
+      shake = Math.max(shake, 10); sfxBell();
+      S.fx.push({ x: pl.x, y: pl.y - 50, t: 0, big: true });
     }
   }
-  pl._pSpecial = inp.special;
+  pl._pLeft = inp.left; pl._pRight = inp.right;
+}
+// スピン中の接触ダメージ
+function spinContact(att, def, dt){
+  if(att.spinT <= 0) return;
+  att.spinHitCd -= dt;
+  if(Math.abs(att.x - def.x) < 66 && Math.abs(att.y - def.y) < 60 && def.inv <= 0 && att.spinHitCd <= 0){
+    att.spinHitCd = 0.3;
+    hitPlayer(def, Math.sign(def.x - att.x) || att.facing, 9, S.fx, (att.x + def.x) / 2, att.y - 46);
+    sfxHit();
+  }
 }
 let shake = 0;
 function stepSim(dt){
@@ -399,10 +389,11 @@ function stepSim(dt){
   const in2 = vsCPU ? cpuInput(S.p2, S.p1, dt) : hostInputFor(2);
   stepPlayerKinematics(S.p1, in1, dt);
   stepPlayerKinematics(S.p2, in2, dt);
-  stepHadouken(S.p1, in1, dt); stepHadouken(S.p2, in2, dt);
-  stepSpecial(S.p1, S.p2, in1, dt); stepSpecial(S.p2, S.p1, in2, dt);
+  stepMissile(S.p1, in1, dt); stepMissile(S.p2, in2, dt);
+  stepSpin(S.p1, in1, dt);    stepSpin(S.p2, in2, dt);
   attackResolve(S.p1, S.p2, dt, S.fx);
   attackResolve(S.p2, S.p1, dt, S.fx);
+  spinContact(S.p1, S.p2, dt); spinContact(S.p2, S.p1, dt);
   // 波動拳の弾
   for(let i = S.waves.length - 1; i >= 0; i--){
     const w = S.waves[i]; w.t += dt; w.x += w.vx * dt;
@@ -435,7 +426,7 @@ function cpuInput(me, foe, dt){
   const ai = me.ai || (me.ai = { biteWait: 0.5, jumpWait: rnd(1,3), react: 0, want: {} });
   const dx = foe.x - me.x, adx = Math.abs(dx);
   const toFoe = Math.sign(dx) || -1;
-  let left=false, right=false, jump=false, bite=false, special=false;
+  let left=false, right=false, jump=false, bite=false, missile=false;
 
   // 反応ディレイ（弱いほど鈍い）
   ai.react -= dt;
@@ -446,6 +437,8 @@ function cpuInput(me, foe, dt){
   if(adx > range + 10){ if(toFoe>0) right=true; else left=true; }
   else if(adx < range - 22){ if(toFoe>0) left=true; else right=true; }
 
+  // 間合い内では必ず相手を向く（噛みつきの空振り防止）
+  if(adx < 130) me.facing = toFoe;
   // 噛みつき（クールダウンが明けた瞬間に確実に出す）
   ai.biteWait -= dt;
   if(adx < P.biteRange && Math.abs(me.y - foe.y) < 70 && me.biteCd <= 0 && me.biteT <= 0 && ai.biteWait <= 0){
@@ -463,29 +456,25 @@ function cpuInput(me, foe, dt){
     else if(ai.jumpWait <= 0 && Math.random() < P.jump * dt * 3){ jump = true; ai.jumpWait = rnd(1.5,3.5); }
   }
 
-  // 波動拳：ゲージ満タンなら少し下がって溜め→前で発射
-  if(me.gauge >= 100 && P.useWave > 0.15){
-    if(!me.ready){
-      // 後ろ（相手と逆）を押して溜める
-      if(toFoe > 0){ left = true; right = false; } else { right = true; left = false; }
+  // ミサイル：ゲージ満タンなら少し離れて、方向＋ミサイル同時押しで発射
+  if(me.gauge >= 100 && me.missCd <= 0 && adx > 120){
+    ai.missWait = (ai.missWait || 0) - dt;
+    if(ai.missWait <= 0 && Math.random() < P.useWave){
+      missile = true;                                  // ミサイルボタン
+      if(toFoe > 0) right = true; else left = true;     // 方向同時押し
       bite = false;
-    }else{
-      // 溜まったら前を押して発射
-      if(toFoe > 0){ right = true; left = false; } else { left = true; right = false; }
+      ai.missWait = 0.9;
     }
   }
 
-  // 必殺（瀕死のときだけ）
-  if(canSpecial(me) && adx < 340 && Math.random() < P.useSp){ special = true; }
-
-  return { left, right, jump, bite, special };
+  return { left, right, jump, bite, missile };
 }
 function broadcastState(force){
   if(!S) return;
   const enc = p => [Math.round(p.x), Math.round(p.y), Math.round(p.vx), Math.round(p.hp),
                     p.facing, +(p.biteT.toFixed(2)), +(p.jaw.toFixed(2)), +(p.inv.toFixed(2)),
                     +(p.hitFlash.toFixed(2)), Math.round(p.tread),
-                    Math.round(p.gauge), p.ready?1:0, +(p.opT.toFixed(2)), p.opSide];
+                    Math.round(p.gauge), +(p.spinT.toFixed(2)), +(p.spin.toFixed(2))];
   send({ t:'s', s:{ a:enc(S.p1), b:enc(S.p2), tm:+S.timer.toFixed(1), ov:S.over, cd:+countdown.toFixed(2),
                     sk:Math.round(shake),
                     wv: S.waves.map(w=>[Math.round(w.x),Math.round(w.y),w.vx<0?-1:1,w.owner]),
@@ -511,7 +500,7 @@ function smoothToward(pl, arr){
   pl.hp=newHp; pl.facing=arr[4]; pl.biteT=arr[5]; pl.jaw=arr[6]; pl.inv=arr[7];
   if(arr[8] > pl.hitFlash) pl.hitFlash = arr[8];
   pl.tread=arr[9];
-  pl.gauge=arr[10]||0; pl.ready=!!arr[11]; pl.opT=arr[12]||0; pl.opSide=arr[13]||1;
+  pl.gauge=arr[10]||0; pl.spinT=arr[11]||0; pl.spin=arr[12]||0;
 }
 
 // ---------- メインループ ----------
@@ -530,11 +519,11 @@ function loop(now){
       // ゲスト：入力送信＋受信状態の反映
       decodeNet();
       const ip = localInput();
-      const s = (ip.left?1:0)+(ip.right?2:0)+(ip.jump?4:0)+(ip.bite?8:0)+(ip.special?16:0);
+      const s = (ip.left?1:0)+(ip.right?2:0)+(ip.jump?4:0)+(ip.bite?8:0)+(ip.missile?16:0);
       inpAcc += raw;
       if(s !== +prevInpStr || inpAcc > 0.08){
         prevInpStr = '' + s; inpAcc = 0;
-        send({ t:'i', l:ip.left, r:ip.right, j:ip.jump, b:ip.bite, s:ip.special });
+        send({ t:'i', l:ip.left, r:ip.right, j:ip.jump, b:ip.bite, m:ip.missile });
       }
       // ゲスト側のローカル予測（自分=P2を軽く先行表示）※ホストが正）
     }
@@ -575,9 +564,6 @@ function draw(){
   // プレイヤー（奥→手前）
   drawMachine(S.p1, 1);
   drawMachine(S.p2, 2);
-  // 伝説のオペレーター（必殺）
-  if(S.p1.opT > 0) drawOperator(S.p1);
-  if(S.p2.opT > 0) drawOperator(S.p2);
   // ヒットエフェクト
   for(const f of S.fx){
     const a = clamp(1 - f.t/0.5, 0, 1);
@@ -613,13 +599,17 @@ function drawHUD(){
   drawHpBar(20, 22, 380, S.p1.hp, false, 'P1' + (youSide()===1?'（あなた）':''), '#ff5db0');
   drawHpBar(W-20-380, 22, 380, S.p2.hp, true, 'P2' + (youSide()===2?'（あなた）':''), '#5db0ff');
   // 波動ゲージ
-  drawGauge(20, 52, 240, S.p1.gauge, S.p1.ready, false);
-  drawGauge(W-20-240, 52, 240, S.p2.gauge, S.p2.ready, true);
-  // 瀕死＝必殺サインを自分の側に
+  drawGauge(20, 52, 240, S.p1.gauge, false);
+  drawGauge(W-20-240, 52, 240, S.p2.gauge, true);
+  // ヒント（自分の状態に応じて）
   const me = youSide()===1 ? S.p1 : S.p2;
-  if(canSpecial(me) && Math.floor(performance.now()/300)%2===0){
-    cx.fillStyle='#ffe14d'; cx.font='bold 15px '+FONT; cx.textAlign='center';
-    cx.fillText('🔥 瀕死！'+(touchMode?'🔥ボタン':'Kキー')+'で必殺・伝説のオペレーター！', W/2, 74);
+  cx.textAlign='center';
+  if(me.spinT > 0){
+    cx.fillStyle='#ffe14d'; cx.font='bold 16px '+FONT;
+    cx.fillText('🌀 旋回中！ 相手にぶつかれ！（あと'+Math.ceil(me.spinT)+'秒）', W/2, 74);
+  }else if(me.gauge >= 100 && Math.floor(performance.now()/300)%2===0){
+    cx.fillStyle='#9effff'; cx.font='bold 14px '+FONT;
+    cx.fillText('🚀 ミサイル準備OK！『方向＋🚀』同時押しで発射！', W/2, 74);
   }
   // タイマー
   cx.textAlign='center'; cx.font = 'bold 34px ' + FONT;
@@ -640,17 +630,18 @@ function drawHpBar(x, y, w, hp, right, label, col){
   cx.fillText(label + '  ' + Math.ceil(hp), right ? x+w-8 : x+8, y+18);
 }
 
-function drawGauge(x, y, w, gauge, ready, right){
+function drawGauge(x, y, w, gauge, right){
+  const full = gauge >= 100;
   cx.fillStyle='rgba(0,0,0,.4)'; roundRect(x,y,w,12,6); cx.fill();
   const r = clamp(gauge/100,0,1);
   const g = cx.createLinearGradient(x,0,x+w,0); g.addColorStop(0,'#4a90d8'); g.addColorStop(1,'#9effff');
-  cx.fillStyle = ready ? '#9effff' : g;
+  cx.fillStyle = full ? '#9effff' : g;
   if(right) roundRect(x+w-w*r, y+2, Math.max(0,w*r-2), 8, 4);
   else roundRect(x+2, y+2, Math.max(0,w*r-2), 8, 4);
   cx.fill();
-  cx.fillStyle = ready ? '#9effff' : 'rgba(255,255,255,.8)';
+  cx.fillStyle = full ? '#9effff' : 'rgba(255,255,255,.8)';
   cx.font='bold 10px '+FONT; cx.textAlign = right?'right':'left';
-  cx.fillText(ready?'波動 READY!':'波動'+Math.floor(gauge)+'%', right?x+w:x, y+22);
+  cx.fillText(full?'🚀ミサイルOK!':'ミサイル '+Math.floor(gauge)+'%', right?x+w:x, y+22);
 }
 function drawMachine(pl, idx){
   const T = performance.now()/1000;
@@ -660,23 +651,27 @@ function drawMachine(pl, idx){
   // 影
   cx.fillStyle = 'rgba(0,0,0,.18)';
   cx.beginPath(); cx.ellipse(0, GROUND-pl.y+6, 52, 8, 0, 0, 7); cx.fill();
-  // 波動チャージのオーラ
-  if(pl.chargeT > 0.05 || pl.ready){
-    const lv = pl.ready ? 1 : clamp(pl.chargeT/0.5, 0, 1);
-    const rr = 60 + lv*22 + Math.sin(T*14)*4;
+  // ミサイル準備OKのうっすらオーラ
+  if(pl.gauge >= 100 && pl.spinT <= 0){
+    const rr = 58 + Math.sin(T*10)*4;
     const grd = cx.createRadialGradient(0,-46,8,0,-46,rr);
-    grd.addColorStop(0, 'rgba(120,200,255,'+(0.30+0.25*lv)+')');
-    grd.addColorStop(1, 'rgba(120,200,255,0)');
+    grd.addColorStop(0,'rgba(120,200,255,.25)'); grd.addColorStop(1,'rgba(120,200,255,0)');
     cx.fillStyle = grd; cx.beginPath(); cx.arc(0,-46,rr,0,7); cx.fill();
-    if(pl.ready){
-      for(let i=0;i<8;i++){ const a=T*5+i*0.785; cx.fillStyle='rgba(180,230,255,.9)';
-        cx.beginPath(); cx.arc(Math.cos(a)*rr*0.7, -46+Math.sin(a)*rr*0.5, 3, 0, 7); cx.fill(); }
-      cx.fillStyle='#9effff'; cx.font='bold 13px '+FONT; cx.textAlign='center';
-      cx.fillText('波動 READY!', 0, -118);
-    }
+  }
+  // 旋回オーラ（スピン中）
+  if(pl.spinT > 0){
+    const rr = 70 + Math.sin(T*22)*6;
+    const grd = cx.createRadialGradient(0,-40,10,0,-40,rr);
+    grd.addColorStop(0,'rgba(255,225,77,.35)'); grd.addColorStop(1,'rgba(255,46,146,0)');
+    cx.fillStyle = grd; cx.beginPath(); cx.arc(0,-40,rr,0,7); cx.fill();
+    cx.strokeStyle='rgba(255,255,255,.5)'; cx.lineWidth=3;
+    cx.beginPath(); cx.arc(0,-40,rr*0.8, T*20%6.28, T*20%6.28+2.2); cx.stroke();
+    if(Math.floor(pl.spinT*1000)%500<60) {}
   }
   cx.save();
   if(flash) cx.globalAlpha = 0.5;
+  // スピン中は重機ごと回転！
+  if(pl.spinT > 0){ cx.translate(0,-40); cx.rotate(pl.spin); cx.translate(0,40); }
   cx.scale(pl.facing, 1);
   cx.rotate(pl.pitch * pl.facing);
   // クローラー
@@ -763,90 +758,48 @@ function heart(x,y,s,col){ cx.fillStyle=col; cx.beginPath();
 function roundRect(x,y,w,h,r){ cx.beginPath(); cx.moveTo(x+r,y);
   cx.arcTo(x+w,y,x+w,y+h,r); cx.arcTo(x+w,y+h,x,y+h,r); cx.arcTo(x,y+h,x,y,r); cx.arcTo(x,y,x+w,y,r); cx.closePath(); }
 
-// 波動拳の弾
+// ミサイル弾
 function drawWave(w){
-  cx.save(); cx.translate(w.x, w.y);
-  const pulse = 1 + Math.sin(performance.now()/40)*0.12;
-  const grd = cx.createRadialGradient(0,0,2,0,0,26*pulse);
-  grd.addColorStop(0,'#ffffff'); grd.addColorStop(0.5,'#7ec8ff'); grd.addColorStop(1,'rgba(80,160,255,0)');
-  cx.fillStyle = grd; cx.beginPath(); cx.arc(0,0,26*pulse,0,7); cx.fill();
-  cx.fillStyle='#fff'; cx.beginPath(); cx.arc(0,0,9,0,7); cx.fill();
-  // 尾
-  cx.fillStyle='rgba(126,200,255,.4)';
-  cx.beginPath(); cx.ellipse(-Math.sign(w.vx)*18,0,18,8,0,0,7); cx.fill();
+  const d = Math.sign(w.vx) || 1;
+  cx.save(); cx.translate(w.x, w.y); cx.scale(d, 1);
+  // 噴射炎＆煙
+  const fl = 14 + Math.sin(performance.now()/30)*5;
+  const grd = cx.createLinearGradient(-12-fl,0,-12,0);
+  grd.addColorStop(0,'rgba(255,180,40,0)'); grd.addColorStop(1,'rgba(255,210,60,.9)');
+  cx.fillStyle = grd;
+  cx.beginPath(); cx.moveTo(-12,-5); cx.lineTo(-12-fl,0); cx.lineTo(-12,5); cx.closePath(); cx.fill();
+  // 本体（ピンク水玉ミサイル）
+  cx.fillStyle = PINK;
+  cx.beginPath();
+  cx.moveTo(18,0); cx.quadraticCurveTo(12,-7,-10,-7); cx.lineTo(-12,-5);
+  cx.lineTo(-12,5); cx.lineTo(-10,7); cx.quadraticCurveTo(12,7,18,0); cx.fill();
+  cx.strokeStyle = PINK_D; cx.lineWidth=1.5; cx.stroke();
+  // 尾翼
+  cx.fillStyle = PINK_D;
+  cx.beginPath(); cx.moveTo(-10,-6); cx.lineTo(-15,-11); cx.lineTo(-9,-4); cx.fill();
+  cx.beginPath(); cx.moveTo(-10,6); cx.lineTo(-15,11); cx.lineTo(-9,4); cx.fill();
+  // 水玉
+  cx.fillStyle='#fff';
+  cx.beginPath(); cx.arc(-2,-2,2,0,7); cx.fill();
+  cx.beginPath(); cx.arc(6,1,2,0,7); cx.fill();
   cx.restore();
 }
-// 伝説のオペレーター（必殺）— 白帽子＋黒ひげ＋紺ベスト
-function drawOperator(pl){
-  const prog = 1 - pl.opT/1.3;             // 0→1
-  const ox = pl.x + pl.opSide * 130;
-  const drop = prog < 0.5 ? (0.5-prog)*2*-260 : 0;   // 落ちてくる
-  const oy = GROUND + drop;
-  // 降臨スポットライト
-  if(prog < 0.6){
-    cx.save(); cx.globalAlpha = 0.5*(1-prog/0.6);
-    cx.fillStyle = '#fff';
-    cx.beginPath(); cx.moveTo(ox-16,0); cx.lineTo(ox+16,0); cx.lineTo(ox+70,GROUND); cx.lineTo(ox-70,GROUND); cx.fill();
-    cx.restore();
-  }
-  cx.save(); cx.translate(ox, oy); cx.scale(pl.opSide, 1);
-  // ハンマー振り（prog 0.5付近で振り下ろし）
-  const sw = clamp((prog-0.45)/0.2, 0, 1);
-  // 脚
-  cx.strokeStyle='#2e3a6e'; cx.lineWidth=8; cx.lineCap='round';
-  cx.beginPath(); cx.moveTo(-5,-30); cx.lineTo(-9,-2); cx.moveTo(5,-30); cx.lineTo(9,-2); cx.stroke();
-  cx.fillStyle='#1e1e1e'; cx.fillRect(-13,-4,12,4); cx.fillRect(2,-4,12,4);
-  // 胴（白T＋紺ベスト）
-  cx.fillStyle='#f4f4ee'; roundRect(-15,-58,30,30,7); cx.fill();
-  cx.fillStyle='#2e3a6e';
-  cx.beginPath(); cx.moveTo(-15,-58); cx.lineTo(-5,-58); cx.lineTo(-6,-28); cx.lineTo(-15,-28); cx.fill();
-  cx.beginPath(); cx.moveTo(15,-58); cx.lineTo(5,-58); cx.lineTo(6,-28); cx.lineTo(15,-28); cx.fill();
-  cx.fillStyle='#d8262b'; cx.fillRect(6,-54,3.5,3.5);
-  // 腕＋大ハンマー
-  const ha = lerp(-2.4, -0.2, sw);
-  cx.strokeStyle='#e8a877'; cx.lineWidth=8;
-  cx.beginPath(); cx.moveTo(4,-52); cx.lineTo(14+Math.cos(ha)*8,-44+Math.sin(ha)*8); cx.stroke();
-  cx.save(); cx.translate(14,-46); cx.rotate(ha);
-  cx.fillStyle='#8a5a2a'; cx.fillRect(0,-3,46,6);
-  cx.translate(46,0);
-  cx.save(); roundRect(-10,-16,26,32,6); cx.fillStyle=PINK; cx.fill(); cx.clip();
-  cx.fillStyle='#fff'; cx.beginPath(); cx.arc(-2,-7,4,0,7); cx.fill(); cx.beginPath(); cx.arc(8,3,4,0,7); cx.fill();
-  cx.restore();
-  cx.strokeStyle=PINK_D; cx.lineWidth=2; roundRect(-10,-16,26,32,6); cx.stroke();
-  cx.restore();
-  // 頭（白帽子・黒ひげ）
-  const hx=4, hy=-66;
-  cx.fillStyle='#dd9863'; cx.beginPath(); cx.arc(hx,hy,10,0,7); cx.fill();
-  cx.fillStyle='#f8f8f4'; cx.beginPath(); cx.arc(hx,hy-3,10.5,Math.PI,0); cx.fill();
-  cx.beginPath(); cx.ellipse(hx,hy-3,10.5,3.4,0,0,7); cx.fill();
-  cx.fillStyle='#2a2622'; cx.beginPath(); cx.ellipse(hx+3,hy+4,3.6,1.8,0.25,0,7); cx.fill();
-  cx.beginPath(); cx.ellipse(hx+6,hy+8,3,1.6,0,0,7); cx.fill();
-  cx.fillStyle='#2a1a10'; cx.beginPath(); cx.arc(hx+3,hy+1,1.4,0,7); cx.fill(); cx.beginPath(); cx.arc(hx+8,hy+1,1.4,0,7); cx.fill();
-  cx.restore();
-  // セリフ
-  if(prog < 0.5){
-    cx.fillStyle='#ffe14d'; cx.font='bold 18px '+FONT; cx.textAlign='center';
-    cx.strokeStyle='rgba(0,0,0,.6)'; cx.lineWidth=4;
-    cx.strokeText('楽勝です！',ox,oy-120); cx.fillText('楽勝です！',ox,oy-120);
-  }
-}
-
 function drawTouch(){
   cx.textBaseline='middle';
   const me = myPlayer();
+  const missileReady = me && me.gauge >= 100;
   for(const k in TB){
-    if(k === 'special' && !canSpecial(me)) continue;
     const b=TB[k];
-    const glow = k==='special';
-    cx.globalAlpha=0.45; cx.fillStyle = glow?'#7a1010':'#10101c'; cx.beginPath(); cx.arc(b.x,b.y,b.r,0,7); cx.fill();
-    cx.strokeStyle = glow && Math.floor(performance.now()/250)%2===0 ? '#ffe14d' : '#fff';
+    const glow = (k==='missile' && missileReady);
+    cx.globalAlpha=0.45; cx.fillStyle = glow?'#0a3a4a':'#10101c'; cx.beginPath(); cx.arc(b.x,b.y,b.r,0,7); cx.fill();
+    cx.strokeStyle = glow && Math.floor(performance.now()/250)%2===0 ? '#9effff' : '#fff';
     cx.lineWidth=3; cx.beginPath(); cx.arc(b.x,b.y,b.r,0,7); cx.stroke();
     cx.fillStyle='#fff'; cx.font='bold '+Math.round(b.r*0.7)+'px '+FONT; cx.textAlign='center';
     cx.fillText(b.label,b.x,b.y+2); cx.globalAlpha=1;
   }
-  // 噛みつき操作のヒント
-  cx.globalAlpha=0.5; cx.fillStyle='#fff'; cx.font='bold 13px '+FONT; cx.textAlign='center';
-  cx.fillText('画面タップで噛みつき', W/2, H-22); cx.globalAlpha=1;
+  // 操作ヒント
+  cx.globalAlpha=0.5; cx.fillStyle='#fff'; cx.font='bold 12px '+FONT; cx.textAlign='center';
+  cx.fillText('画面タップで噛みつき　／　◀▶を素早く交互4回で旋回🌀', W/2, H-20); cx.globalAlpha=1;
   cx.textBaseline='alphabetic';
 }
 
