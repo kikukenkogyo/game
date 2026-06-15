@@ -186,10 +186,12 @@ function wireConn(){
     if(net.isHost){ startMatch(); broadcastState(true); }
   });
   c.on('data', d => {
-    if(d.t === 'i'){ net.remoteInput = { left:!!d.l, right:!!d.r, jump:!!d.j, bite:!!d.b }; }
-    else if(d.t === 's'){ net.netState = d.s; net.lastRecv = perfNow(); if(phase !== 'play' && !S.over) phase = 'play'; }
-    else if(d.t === 'rs'){ if(!net.isHost){ applyServerStart(d); } }
-    else if(d.t === 'bye'){ peerLost('相手が退出しました'); }
+    try{
+      if(d.t === 'i'){ net.remoteInput = { left:!!d.l, right:!!d.r, jump:!!d.j, bite:!!d.b }; }
+      else if(d.t === 's'){ net.netState = d.s; net.lastRecv = perfNow(); if(phase !== 'play' && !(S && S.over)) phase = 'play'; }
+      else if(d.t === 'rs'){ if(!net.isHost){ applyServerStart(d); } }
+      else if(d.t === 'bye'){ peerLost('相手が退出しました'); }
+    }catch(err){ /* 1通の不正データで接続を切らない */ }
   });
   c.on('close', () => peerLost('接続が切れました'));
   c.on('error', () => peerLost('通信エラーが発生しました'));
