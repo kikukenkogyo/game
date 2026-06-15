@@ -346,7 +346,8 @@ function stepMissile(pl, inp, dt){
     // 離した瞬間：十分溜まっていれば発射
     if(pl._pMissile && pl.missCharge >= 0.5){
       pl.facing = toFoe;
-      S.waves.push({ x: pl.x + toFoe * 50, y: pl.y - 52, vx: toFoe * 540, owner: pl === S.p1 ? 1 : 2, t: 0, missile: true });
+      // 低空飛行：地面すれすれを飛ぶ（ジャンプで避けられる）
+      S.waves.push({ x: pl.x + toFoe * 50, y: GROUND - 30, vx: toFoe * 540, owner: pl === S.p1 ? 1 : 2, t: 0, missile: true });
       pl.missCd = 0.8;
       sfxBell();
     }
@@ -403,7 +404,9 @@ function stepSim(dt){
   for(let i = S.waves.length - 1; i >= 0; i--){
     const w = S.waves[i]; w.t += dt; w.x += w.vx * dt;
     const def = w.owner === 1 ? S.p2 : S.p1;
-    if(Math.abs(w.x - def.x) < 44 && def.inv <= 0){
+    // 低空ミサイル：横が合っていても、ジャンプで機体が上がっていれば当たらない
+    const vHit = (w.y > def.y - 92) && (w.y < def.y + 14);
+    if(Math.abs(w.x - def.x) < 44 && vHit && def.inv <= 0){
       def.hp = Math.max(0, def.hp - 18);
       def.inv = 0.5; def.hitFlash = 0.35;
       def.vx = Math.sign(w.vx) * 300; def.vy = -160; def.onGround = false;
