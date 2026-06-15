@@ -35,8 +35,18 @@
     <h1>菊建クラッシャー 対戦</h1>
     <div class="sub">～ ピンク水玉重機でタイマン勝負！ ～</div>
     <div id="menu" class="row">
+      <button class="btn" id="bCPU" style="background:#ff8a3a;box-shadow:0 4px 0 #c25e1a;">🤖 CPUと対戦（ひとり）</button>
       <button class="btn" id="bHost">🏠 部屋を作る（ホスト）</button>
       <button class="btn sub" id="bJoin">🔑 部屋に入る（ゲスト）</button>
+    </div>
+    <div id="cpuBox" class="panel" style="display:none;">
+      <div>CPUの強さを選んでね</div>
+      <div class="row" style="margin-top:12px;">
+        <button class="btn" id="bCpu0" style="background:#7ad36b;box-shadow:0 4px 0 #4e9243;min-width:0;">よわい</button>
+        <button class="btn" id="bCpu1" style="background:#ffb02e;box-shadow:0 4px 0 #c2841a;min-width:0;">ふつう</button>
+        <button class="btn" id="bCpu2" style="background:#ff4d4d;box-shadow:0 4px 0 #c21a1a;min-width:0;">つよい</button>
+      </div>
+      <button class="btn ghost" id="bCpuCancel" style="margin-top:12px;">もどる</button>
     </div>
     <div id="hostBox" class="panel" style="display:none;">
       <div>あいことば（相手に伝えてね）</div>
@@ -98,43 +108,76 @@ addEventListener('keydown', e => {
   keys[e.code] = true;
   if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space'].includes(e.code)) e.preventDefault();
   if(e.code === 'KeyR' && phase === 'result' && net.isHost) hostRestart();
+  if((e.code === 'KeyM' || e.code === 'Escape') && phase === 'result') returnToMenu();
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
 
-// タッチボタン
+// タッチボタン（移動＆ジャンプは左側／必殺は右側／噛みつきは画面タップ）
 const TB = {
-  left:  { x: 72,      y: H - 56, r: 44, label: '◀' },
-  right: { x: 180,     y: H - 56, r: 44, label: '▶' },
-  jump:  { x: W - 180, y: H - 56, r: 44, label: '▲' },
-  bite:  { x: W - 72,  y: H - 56, r: 50, label: '🦷' },
+  left:    { x: 66,     y: H - 56,  r: 46, label: '◀' },
+  right:   { x: 178,    y: H - 56,  r: 46, label: '▶' },
+  jump:    { x: 122,    y: H - 150, r: 40, label: '▲' },
+  special: { x: W - 84, y: H - 70,  r: 52, label: '🔥' },  // 瀕死のときだけ出現
 };
 let touchMode = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
 const touchHit = {};
+let biteLatch = 0;   // タップで噛む（短時間ラッチして確実に入力に乗せる）
 function tpos(t){ const r = cv.getBoundingClientRect(); return { x:(t.clientX-r.left)*W/r.width, y:(t.clientY-r.top)*H/r.height }; }
-function btnAt(x,y){ for(const k in TB){ const b=TB[k]; if(Math.hypot(x-b.x,y-b.y)<=b.r+10) return k; } return null; }
+function btnAt(x,y){
+  for(const k in TB){
+    if(k === 'special' && !canSpecial(myPlayer())) continue;  // 必殺は使える時だけ反応
+    const b=TB[k]; if(Math.hypot(x-b.x,y-b.y)<=b.r+10) return k;
+  }
+  return null;
+}
 cv.addEventListener('touchstart', e => {
   e.preventDefault(); touchMode = true; try{ ac().resume&&ac().resume(); }catch(_){}
-  if(phase === 'result' && net.isHost){ hostRestart(); return; }
-  for(const t of e.changedTouches){ const p=tpos(t),b=btnAt(p.x,p.y); if(b){ touchHit[t.identifier]=b; keys['T_'+b]=true; } }
+  if(phase === 'result'){ const p0=tpos(e.changedTouches[0]); handleResultTap(p0.x,p0.y); return; }
+  for(const t of e.changedTouches){
+    const p=tpos(t), b=btnAt(p.x,p.y);
+    if(b){ touchHit[t.identifier]=b; keys['T_'+b]=true; }
+    else { biteLatch = 0.16; }   // ボタン以外をタップ＝噛む
+  }
 }, {passive:false});
 cv.addEventListener('touchmove', e => { e.preventDefault(); }, {passive:false});
 function tend(e){ e.preventDefault(); for(const t of e.changedTouches){ const b=touchHit[t.identifier]; if(b){ keys['T_'+b]=false; delete touchHit[t.identifier]; } } }
 cv.addEventListener('touchend', tend, {passive:false});
 cv.addEventListener('touchcancel', tend, {passive:false});
+// PC：クリックで噛む
+cv.addEventListener('mousedown', e => {
+  try{ ac().resume&&ac().resume(); }catch(_){}
+  if(phase === 'result'){ const r=cv.getBoundingClientRect(); handleResultTap((e.clientX-r.left)*W/r.width,(e.clientY-r.top)*H/r.height); return; }
+  if(e.button === 0) biteLatch = 0.16;
+});
+// リザルトのボタン
+const RBTN_AGAIN = { x: W/2 - 210, y: H - 84, w: 200, h: 52 };
+const RBTN_MENU  = { x: W/2 + 10,  y: H - 84, w: 200, h: 52 };
+function ptIn(b,x,y){ return x>=b.x && x<=b.x+b.w && y>=b.y && y<=b.y+b.h; }
+function handleResultTap(x,y){
+  if(ptIn(RBTN_MENU,x,y)){ returnToMenu(); return; }
+  if(net.isHost && (ptIn(RBTN_AGAIN,x,y) || true)) hostRestart();   // 「もう一戦」or画面どこでも（ホスト）
+}
+function returnToMenu(){
+  if(vsCPU){ vsCPU=false; phase='menu'; S=null; lobby.classList.remove('hidden'); showBox('menu'); }
+  else peerLost('');
+}
 
 function localInput(){
   return {
     left:  !!(keys['ArrowLeft']||keys['KeyA']||keys['T_left']),
     right: !!(keys['ArrowRight']||keys['KeyD']||keys['T_right']),
     jump:  !!(keys['ArrowUp']||keys['KeyW']||keys['T_jump']),
-    bite:  !!(keys['Space']||keys['KeyJ']||keys['T_bite']),
+    bite:  biteLatch > 0 || !!(keys['Space']||keys['KeyJ']),
+    special: !!(keys['KeyK']||keys['T_special']),
   };
 }
+function myPlayer(){ if(!S) return null; return net.isHost ? S.p1 : S.p2; }
+function canSpecial(pl){ return pl && pl.hp > 0 && pl.hp <= 30 && (pl.opCd||0) <= 0 && (pl.opT||0) <= 0; }
 
 // ---------- ネットワーク（PeerJS / ホスト権限方式） ----------
 const net = {
   peer: null, conn: null, isHost: false, connected: false,
-  remoteInput: { left:false, right:false, jump:false, bite:false },
+  remoteInput: { left:false, right:false, jump:false, bite:false, special:false },
   netState: null, lastRecv: 0,
 };
 function randCode(){ let s=''; for(let i=0;i<4;i++) s += ALPHA[Math.floor(Math.random()*ALPHA.length)]; return s; }
@@ -187,7 +230,7 @@ function wireConn(){
   });
   c.on('data', d => {
     try{
-      if(d.t === 'i'){ net.remoteInput = { left:!!d.l, right:!!d.r, jump:!!d.j, bite:!!d.b }; }
+      if(d.t === 'i'){ net.remoteInput = { left:!!d.l, right:!!d.r, jump:!!d.j, bite:!!d.b, special:!!d.s }; }
       else if(d.t === 's'){ net.netState = d.s; net.lastRecv = perfNow(); if(phase !== 'play' && !(S && S.over)) phase = 'play'; }
       else if(d.t === 'rs'){ if(!net.isHost){ applyServerStart(d); } }
       else if(d.t === 'bye'){ peerLost('相手が退出しました'); }
@@ -198,6 +241,7 @@ function wireConn(){
 }
 function peerLost(msg){
   net.connected = false;
+  vsCPU = false;
   phase = 'menu';
   lobby.classList.remove('hidden');
   showBox('menu');
@@ -212,25 +256,35 @@ function send(obj){ try{ if(net.conn && net.connected) net.conn.send(obj); }catc
 let phase = 'menu';   // menu / play / result
 let S = null;
 let countdown = 0;
+let vsCPU = false, cpuLevel = 1;
+// CPUの強さ（反応・攻撃頻度・回避・波動/必殺の使用率）
+const CPU_PARAM = [
+  { biteRange: 86, biteGap: 0.85, react: 0.45, jump: 0.25, dodge: 0.25, useWave: 0.2, useSp: 0.4, speed: 0.82 }, // よわい
+  { biteRange: 94, biteGap: 0.58, react: 0.22, jump: 0.5,  dodge: 0.6,  useWave: 0.6, useSp: 0.8, speed: 0.95 }, // ふつう
+  { biteRange: 100, biteGap: 0.4, react: 0.10, jump: 0.7,  dodge: 0.9,  useWave: 0.9, useSp: 1.0, speed: 1.05 }, // つよい
+];
 function mkPlayer(x, face){
   return { x, y: GROUND, vx:0, vy:0, onGround:true, hp:100, facing:face,
-           biteT:0, biteCd:0, ramCd:0, inv:0, hitFlash:0, jaw:0.2, tread:0, pitch:0 };
+           biteT:0, biteCd:0, ramCd:0, inv:0, hitFlash:0, jaw:0.2, tread:0, pitch:0,
+           gauge:0, chargeT:0, ready:false, opT:0, opCd:0, opSide:1, opHit:false,
+           _pFwd:false, _pSpecial:false, ai:null };
 }
 function startMatch(){
   S = { p1: mkPlayer(ARENA_L + 130, 1), p2: mkPlayer(ARENA_R - 130, -1),
-        t: 0, timer: MATCH_TIME, over: 0, fx: [] };
+        t: 0, timer: MATCH_TIME, over: 0, fx: [], waves: [] };
   countdown = 3.2;
   phase = 'play';
 }
 function applyServerStart(d){
   S = { p1: mkPlayer(ARENA_L + 130, 1), p2: mkPlayer(ARENA_R - 130, -1),
-        t: 0, timer: MATCH_TIME, over: 0, fx: [] };
+        t: 0, timer: MATCH_TIME, over: 0, fx: [], waves: [] };
   countdown = 3.2; phase = 'play';
 }
 function hostRestart(){ startMatch(); send({ t:'rs' }); }
 
 // ---------- シミュレーション（ホストのみが進める純粋関数的処理） ----------
 function clamp(v,a,b){ return v<a?a:v>b?b:v; }
+function rnd(a,b){ return a + Math.random()*(b-a); }
 function lerp(a,b,t){ return a+(b-a)*t; }
 function stepPlayerKinematics(pl, inp, dt){
   let mv = (inp.right?1:0) - (inp.left?1:0);
@@ -258,40 +312,111 @@ function stepPlayerKinematics(pl, inp, dt){
   pl.jaw = lerp(pl.jaw, jt, Math.min(1, dt*16));
 }
 function attackResolve(att, def, dt, fx){
-  // 噛みつき：発動の中盤に前方ヒット
-  if(att.biteT > 0.10 && att.biteT < 0.24 && def.inv <= 0){
-    const reach = 78, fx0 = att.x + att.facing * 30;
-    const tipX = att.x + att.facing * reach;
-    if(((att.facing > 0 && def.x > att.x && def.x < tipX + 24) ||
-        (att.facing < 0 && def.x < att.x && def.x > tipX - 24)) &&
-       Math.abs(def.y - att.y) < 64){
-      hitPlayer(def, att.facing, 14, fx, fx0, att.y - 50);
+  // 噛みつき：発動中の前方ヒット（広め＆確実に当たる判定）
+  if(att.biteT > 0.06 && att.biteT < 0.26 && def.inv <= 0){
+    const dx = def.x - att.x;
+    const towardOk = att.facing > 0 ? dx > -24 : dx < 24;   // 多少めり込んでもOK
+    if(Math.abs(dx) < 100 && towardOk && Math.abs(def.y - att.y) < 72){
+      hitPlayer(def, Math.sign(dx) || att.facing, 16, fx, att.x + att.facing * 40, att.y - 50);
+      sfxHit();
     }
   }
   // 体当たり：スピードが乗っていて接触
   if(Math.abs(att.vx) > 175 && att.ramCd <= 0 && def.inv <= 0){
-    if(Math.abs(att.x - def.x) < 52 && Math.abs(att.y - def.y) < 56 &&
+    if(Math.abs(att.x - def.x) < 54 && Math.abs(att.y - def.y) < 56 &&
        Math.sign(att.vx) === Math.sign(def.x - att.x)){
       att.ramCd = 0.5;
-      hitPlayer(def, Math.sign(att.vx), 7, fx, (att.x+def.x)/2, att.y - 46);
+      hitPlayer(def, Math.sign(att.vx), 8, fx, (att.x+def.x)/2, att.y - 46);
       att.vx *= -0.3;
     }
   }
 }
 function hitPlayer(def, dir, dmg, fx, fxx, fxy){
   def.hp = Math.max(0, def.hp - dmg);
-  def.inv = 0.55; def.hitFlash = 0.3;
+  def.inv = 0.5; def.hitFlash = 0.3;
   def.vx = dir * 240; def.vy = -150; def.onGround = false;
-  fx.push({ x: fxx, y: fxy, t: 0, big: dmg >= 12 });
+  def.gauge = Math.min(100, def.gauge + 26);   // ダメージを受けると波動ゲージが溜まる
+  fx.push({ x: fxx, y: fxy, t: 0, big: dmg >= 14 });
 }
+// 波動拳：ゲージ満タン→「後ろ（相手と逆）」で溜め（オーラ）→「前（相手側）」で発射
+function stepHadouken(pl, inp, dt){
+  const foe = pl === S.p1 ? S.p2 : S.p1;
+  const toFoe = Math.sign(foe.x - pl.x) || pl.facing || 1;   // 相手のいる向き
+  const backHeld = toFoe > 0 ? inp.left : inp.right;          // 相手と逆＝溜め
+  const fwdHeld  = toFoe > 0 ? inp.right : inp.left;          // 相手側＝発射
+  const full = pl.gauge >= 100;
+  if(!full){ pl.chargeT = 0; pl.ready = false; pl._pFwd = fwdHeld; return; }
+  if(pl.ready){
+    // 溜め完了は保持。前（相手側）の押し始めで発射
+    if(fwdHeld && !pl._pFwd){
+      pl.facing = toFoe;
+      S.waves.push({ x: pl.x + toFoe * 46, y: pl.y - 50, vx: toFoe * 460, owner: pl === S.p1 ? 1 : 2, t: 0 });
+      pl.gauge = 0; pl.chargeT = 0; pl.ready = false;
+      sfxBell();
+    }
+  }else{
+    if(backHeld && !fwdHeld && pl.opT <= 0) pl.chargeT = Math.min(1.2, pl.chargeT + dt);
+    else pl.chargeT = Math.max(0, pl.chargeT - dt * 2);
+    if(pl.chargeT >= 0.5) pl.ready = true;   // ここで完了をラッチ
+  }
+  pl._pFwd = fwdHeld;
+}
+// 必殺技：瀕死のときだけ伝説のオペレーター登場
+function stepSpecial(pl, def, inp, dt){
+  if(pl.opCd > 0) pl.opCd -= dt;
+  const specEdge = inp.special && !pl._pSpecial;
+  if(specEdge && canSpecial(pl)){
+    pl.opT = 1.3; pl.opCd = 4; pl.opHit = false;
+    pl.opSide = (def.x >= pl.x) ? 1 : -1;
+    pl.inv = Math.max(pl.inv, 1.3);
+    sfxBell();
+  }
+  if(pl.opT > 0){
+    pl.opT -= dt;
+    // 振り下ろしの瞬間に大ダメージ
+    if(!pl.opHit && pl.opT < 0.7){
+      pl.opHit = true;
+      const smashX = pl.x + pl.opSide * 130;
+      if(Math.abs(def.x - smashX) < 150 && def.inv <= 0.6){
+        const dir = pl.opSide;
+        def.hp = Math.max(0, def.hp - 34);
+        def.inv = 0.8; def.hitFlash = 0.4;
+        def.vx = dir * 460; def.vy = -260; def.onGround = false;
+        S.fx.push({ x: smashX, y: GROUND - 40, t: 0, big: true });
+      }
+      shake = 24;
+    }
+  }
+  pl._pSpecial = inp.special;
+}
+let shake = 0;
 function stepSim(dt){
   S.t += dt;
+  if(shake > 0) shake = Math.max(0, shake - dt * 40);
   if(countdown > 0) return;            // カウントダウン中は動かない
   if(S.over) return;
-  stepPlayerKinematics(S.p1, hostInputFor(1), dt);
-  stepPlayerKinematics(S.p2, hostInputFor(2), dt);
+  const in1 = hostInputFor(1);
+  const in2 = vsCPU ? cpuInput(S.p2, S.p1, dt) : hostInputFor(2);
+  stepPlayerKinematics(S.p1, in1, dt);
+  stepPlayerKinematics(S.p2, in2, dt);
+  stepHadouken(S.p1, in1, dt); stepHadouken(S.p2, in2, dt);
+  stepSpecial(S.p1, S.p2, in1, dt); stepSpecial(S.p2, S.p1, in2, dt);
   attackResolve(S.p1, S.p2, dt, S.fx);
   attackResolve(S.p2, S.p1, dt, S.fx);
+  // 波動拳の弾
+  for(let i = S.waves.length - 1; i >= 0; i--){
+    const w = S.waves[i]; w.t += dt; w.x += w.vx * dt;
+    const def = w.owner === 1 ? S.p2 : S.p1;
+    if(Math.abs(w.x - def.x) < 44 && def.inv <= 0){
+      def.hp = Math.max(0, def.hp - 18);
+      def.inv = 0.5; def.hitFlash = 0.35;
+      def.vx = Math.sign(w.vx) * 300; def.vy = -160; def.onGround = false;
+      S.fx.push({ x: w.x, y: w.y, t: 0, big: true });
+      sfxHit();
+      S.waves.splice(i, 1); continue;
+    }
+    if(w.x < ARENA_L - 60 || w.x > ARENA_R + 60) S.waves.splice(i, 1);
+  }
   S.timer = Math.max(0, S.timer - dt);
   // 勝敗
   if(S.p1.hp <= 0 && S.p2.hp <= 0) S.over = 3;       // 相打ち
@@ -304,22 +429,75 @@ function hostInputFor(side){
   // ホスト=P1が自分、ゲスト側入力=P2（リモート）
   return side === 1 ? localInput() : net.remoteInput;
 }
+// ---------- CPU（AI） ----------
+function cpuInput(me, foe, dt){
+  const P = CPU_PARAM[cpuLevel] || CPU_PARAM[1];
+  const ai = me.ai || (me.ai = { biteWait: 0.5, jumpWait: rnd(1,3), react: 0, want: {} });
+  const dx = foe.x - me.x, adx = Math.abs(dx);
+  const toFoe = Math.sign(dx) || -1;
+  let left=false, right=false, jump=false, bite=false, special=false;
+
+  // 反応ディレイ（弱いほど鈍い）
+  ai.react -= dt;
+  if(ai.react <= 0){ ai.react = P.react; ai.targetAdx = 60; }
+
+  // 間合い調整
+  const range = 60;
+  if(adx > range + 10){ if(toFoe>0) right=true; else left=true; }
+  else if(adx < range - 22){ if(toFoe>0) left=true; else right=true; }
+
+  // 噛みつき（クールダウンが明けた瞬間に確実に出す）
+  ai.biteWait -= dt;
+  if(adx < P.biteRange && Math.abs(me.y - foe.y) < 70 && me.biteCd <= 0 && me.biteT <= 0 && ai.biteWait <= 0){
+    bite = true; ai.biteWait = P.biteGap + rnd(0,0.12);
+  }
+
+  // 相手の波動弾をジャンプで回避
+  let incoming = null;
+  for(const w of S.waves){ if(w.owner !== (me===S.p1?1:2)){
+    if(Math.sign(w.vx) === toFoe*-1 && Math.abs(w.x - me.x) < 170){ incoming = w; }
+  }}
+  ai.jumpWait -= dt;
+  if(me.onGround){
+    if(incoming && Math.random() < P.dodge){ jump = true; ai.jumpWait = rnd(0.8,1.6); }
+    else if(ai.jumpWait <= 0 && Math.random() < P.jump * dt * 3){ jump = true; ai.jumpWait = rnd(1.5,3.5); }
+  }
+
+  // 波動拳：ゲージ満タンなら少し下がって溜め→前で発射
+  if(me.gauge >= 100 && P.useWave > 0.15){
+    if(!me.ready){
+      // 後ろ（相手と逆）を押して溜める
+      if(toFoe > 0){ left = true; right = false; } else { right = true; left = false; }
+      bite = false;
+    }else{
+      // 溜まったら前を押して発射
+      if(toFoe > 0){ right = true; left = false; } else { left = true; right = false; }
+    }
+  }
+
+  // 必殺（瀕死のときだけ）
+  if(canSpecial(me) && adx < 340 && Math.random() < P.useSp){ special = true; }
+
+  return { left, right, jump, bite, special };
+}
 function broadcastState(force){
   if(!S) return;
   const enc = p => [Math.round(p.x), Math.round(p.y), Math.round(p.vx), Math.round(p.hp),
                     p.facing, +(p.biteT.toFixed(2)), +(p.jaw.toFixed(2)), +(p.inv.toFixed(2)),
-                    +(p.hitFlash.toFixed(2)), Math.round(p.tread)];
+                    +(p.hitFlash.toFixed(2)), Math.round(p.tread),
+                    Math.round(p.gauge), p.ready?1:0, +(p.opT.toFixed(2)), p.opSide];
   send({ t:'s', s:{ a:enc(S.p1), b:enc(S.p2), tm:+S.timer.toFixed(1), ov:S.over, cd:+countdown.toFixed(2),
+                    sk:Math.round(shake),
+                    wv: S.waves.map(w=>[Math.round(w.x),Math.round(w.y),w.vx<0?-1:1,w.owner]),
                     fx: S.fx.filter(f=>f.t<0.05).map(f=>[Math.round(f.x),Math.round(f.y),f.big?1:0]) } });
 }
 function decodeNet(){
   const s = net.netState; if(!s) return;
-  const dec = (arr, pl) => { pl.x=arr[0]; pl.y=arr[1]; pl.vx=arr[2]; pl.hp=arr[3]; pl.facing=arr[4];
-    pl.biteT=arr[5]; pl.jaw=arr[6]; pl.inv=arr[7]; pl.hitFlash=arr[8]; pl.tread=arr[9]; };
-  if(!S) S = { p1: mkPlayer(0,1), p2: mkPlayer(0,-1), t:0, timer:MATCH_TIME, over:0, fx:[] };
+  if(!S) S = { p1: mkPlayer(0,1), p2: mkPlayer(0,-1), t:0, timer:MATCH_TIME, over:0, fx:[], waves:[] };
   // ゲスト側：受信値へスムーズ補間
   smoothToward(S.p1, s.a); smoothToward(S.p2, s.b);
-  S.timer = s.tm; S.over = s.ov; countdown = s.cd;
+  S.timer = s.tm; S.over = s.ov; countdown = s.cd; shake = s.sk || 0;
+  S.waves = (s.wv || []).map(w=>({ x:w[0], y:w[1], vx:w[2], owner:w[3], t:0 }));
   if(s.fx) for(const f of s.fx) S.fx.push({ x:f[0], y:f[1], t:0, big:!!f[2] });
   if(S.over && phase !== 'result'){ phase = 'result'; sfxBell(); }
 }
@@ -333,6 +511,7 @@ function smoothToward(pl, arr){
   pl.hp=newHp; pl.facing=arr[4]; pl.biteT=arr[5]; pl.jaw=arr[6]; pl.inv=arr[7];
   if(arr[8] > pl.hitFlash) pl.hitFlash = arr[8];
   pl.tread=arr[9];
+  pl.gauge=arr[10]||0; pl.ready=!!arr[11]; pl.opT=arr[12]||0; pl.opSide=arr[13]||1;
 }
 
 // ---------- メインループ ----------
@@ -340,6 +519,7 @@ function perfNow(){ return performance.now(); }
 let last = perfNow(), sendAcc = 0, inpAcc = 0, prevInpStr = '';
 function loop(now){
   const raw = Math.min(0.033, (now - last)/1000); last = now;
+  if(biteLatch > 0) biteLatch = Math.max(0, biteLatch - raw);
   if(phase === 'play' || phase === 'result'){
     if(countdown > 0) countdown = Math.max(0, countdown - raw);
     if(net.isHost){
@@ -350,11 +530,11 @@ function loop(now){
       // ゲスト：入力送信＋受信状態の反映
       decodeNet();
       const ip = localInput();
-      const s = (ip.left?1:0)+(ip.right?2:0)+(ip.jump?4:0)+(ip.bite?8:0);
+      const s = (ip.left?1:0)+(ip.right?2:0)+(ip.jump?4:0)+(ip.bite?8:0)+(ip.special?16:0);
       inpAcc += raw;
       if(s !== +prevInpStr || inpAcc > 0.08){
         prevInpStr = '' + s; inpAcc = 0;
-        send({ t:'i', l:ip.left, r:ip.right, j:ip.jump, b:ip.bite });
+        send({ t:'i', l:ip.left, r:ip.right, j:ip.jump, b:ip.bite, s:ip.special });
       }
       // ゲスト側のローカル予測（自分=P2を軽く先行表示）※ホストが正）
     }
@@ -385,9 +565,19 @@ function draw(){
   if(phase === 'menu'){ drawMenuBg(); return; }
   if(!S){ return; }
 
+  // 画面ゆれ（必殺などの衝撃）
+  const shx = shake > 0 ? (Math.random()*2-1)*shake : 0, shy = shake > 0 ? (Math.random()*2-1)*shake : 0;
+  cx.save();
+  cx.translate(shx, shy);
+
+  // 波動拳の弾
+  for(const w of S.waves) drawWave(w);
   // プレイヤー（奥→手前）
   drawMachine(S.p1, 1);
   drawMachine(S.p2, 2);
+  // 伝説のオペレーター（必殺）
+  if(S.p1.opT > 0) drawOperator(S.p1);
+  if(S.p2.opT > 0) drawOperator(S.p2);
   // ヒットエフェクト
   for(const f of S.fx){
     const a = clamp(1 - f.t/0.5, 0, 1);
@@ -400,6 +590,7 @@ function draw(){
     if(f.t < 0.4) cx.fillText(f.big?'ガツン！':'ゴツ！', f.x, f.y - 16 - f.t*30);
     cx.restore();
   }
+  cx.restore(); // shake
   drawHUD();
   if(touchMode && !S.over) drawTouch();
 
@@ -421,6 +612,15 @@ function drawHUD(){
   // P1（左） / P2（右）
   drawHpBar(20, 22, 380, S.p1.hp, false, 'P1' + (youSide()===1?'（あなた）':''), '#ff5db0');
   drawHpBar(W-20-380, 22, 380, S.p2.hp, true, 'P2' + (youSide()===2?'（あなた）':''), '#5db0ff');
+  // 波動ゲージ
+  drawGauge(20, 52, 240, S.p1.gauge, S.p1.ready, false);
+  drawGauge(W-20-240, 52, 240, S.p2.gauge, S.p2.ready, true);
+  // 瀕死＝必殺サインを自分の側に
+  const me = youSide()===1 ? S.p1 : S.p2;
+  if(canSpecial(me) && Math.floor(performance.now()/300)%2===0){
+    cx.fillStyle='#ffe14d'; cx.font='bold 15px '+FONT; cx.textAlign='center';
+    cx.fillText('🔥 瀕死！'+(touchMode?'🔥ボタン':'Kキー')+'で必殺・伝説のオペレーター！', W/2, 74);
+  }
   // タイマー
   cx.textAlign='center'; cx.font = 'bold 34px ' + FONT;
   cx.fillStyle = S.timer < 11 ? '#ff5252' : '#fff';
@@ -440,6 +640,18 @@ function drawHpBar(x, y, w, hp, right, label, col){
   cx.fillText(label + '  ' + Math.ceil(hp), right ? x+w-8 : x+8, y+18);
 }
 
+function drawGauge(x, y, w, gauge, ready, right){
+  cx.fillStyle='rgba(0,0,0,.4)'; roundRect(x,y,w,12,6); cx.fill();
+  const r = clamp(gauge/100,0,1);
+  const g = cx.createLinearGradient(x,0,x+w,0); g.addColorStop(0,'#4a90d8'); g.addColorStop(1,'#9effff');
+  cx.fillStyle = ready ? '#9effff' : g;
+  if(right) roundRect(x+w-w*r, y+2, Math.max(0,w*r-2), 8, 4);
+  else roundRect(x+2, y+2, Math.max(0,w*r-2), 8, 4);
+  cx.fill();
+  cx.fillStyle = ready ? '#9effff' : 'rgba(255,255,255,.8)';
+  cx.font='bold 10px '+FONT; cx.textAlign = right?'right':'left';
+  cx.fillText(ready?'波動 READY!':'波動'+Math.floor(gauge)+'%', right?x+w:x, y+22);
+}
 function drawMachine(pl, idx){
   const T = performance.now()/1000;
   const flash = pl.hitFlash > 0 && Math.floor(pl.hitFlash*16)%2===0;
@@ -448,6 +660,21 @@ function drawMachine(pl, idx){
   // 影
   cx.fillStyle = 'rgba(0,0,0,.18)';
   cx.beginPath(); cx.ellipse(0, GROUND-pl.y+6, 52, 8, 0, 0, 7); cx.fill();
+  // 波動チャージのオーラ
+  if(pl.chargeT > 0.05 || pl.ready){
+    const lv = pl.ready ? 1 : clamp(pl.chargeT/0.5, 0, 1);
+    const rr = 60 + lv*22 + Math.sin(T*14)*4;
+    const grd = cx.createRadialGradient(0,-46,8,0,-46,rr);
+    grd.addColorStop(0, 'rgba(120,200,255,'+(0.30+0.25*lv)+')');
+    grd.addColorStop(1, 'rgba(120,200,255,0)');
+    cx.fillStyle = grd; cx.beginPath(); cx.arc(0,-46,rr,0,7); cx.fill();
+    if(pl.ready){
+      for(let i=0;i<8;i++){ const a=T*5+i*0.785; cx.fillStyle='rgba(180,230,255,.9)';
+        cx.beginPath(); cx.arc(Math.cos(a)*rr*0.7, -46+Math.sin(a)*rr*0.5, 3, 0, 7); cx.fill(); }
+      cx.fillStyle='#9effff'; cx.font='bold 13px '+FONT; cx.textAlign='center';
+      cx.fillText('波動 READY!', 0, -118);
+    }
+  }
   cx.save();
   if(flash) cx.globalAlpha = 0.5;
   cx.scale(pl.facing, 1);
@@ -536,13 +763,90 @@ function heart(x,y,s,col){ cx.fillStyle=col; cx.beginPath();
 function roundRect(x,y,w,h,r){ cx.beginPath(); cx.moveTo(x+r,y);
   cx.arcTo(x+w,y,x+w,y+h,r); cx.arcTo(x+w,y+h,x,y+h,r); cx.arcTo(x,y+h,x,y,r); cx.arcTo(x,y,x+w,y,r); cx.closePath(); }
 
+// 波動拳の弾
+function drawWave(w){
+  cx.save(); cx.translate(w.x, w.y);
+  const pulse = 1 + Math.sin(performance.now()/40)*0.12;
+  const grd = cx.createRadialGradient(0,0,2,0,0,26*pulse);
+  grd.addColorStop(0,'#ffffff'); grd.addColorStop(0.5,'#7ec8ff'); grd.addColorStop(1,'rgba(80,160,255,0)');
+  cx.fillStyle = grd; cx.beginPath(); cx.arc(0,0,26*pulse,0,7); cx.fill();
+  cx.fillStyle='#fff'; cx.beginPath(); cx.arc(0,0,9,0,7); cx.fill();
+  // 尾
+  cx.fillStyle='rgba(126,200,255,.4)';
+  cx.beginPath(); cx.ellipse(-Math.sign(w.vx)*18,0,18,8,0,0,7); cx.fill();
+  cx.restore();
+}
+// 伝説のオペレーター（必殺）— 白帽子＋黒ひげ＋紺ベスト
+function drawOperator(pl){
+  const prog = 1 - pl.opT/1.3;             // 0→1
+  const ox = pl.x + pl.opSide * 130;
+  const drop = prog < 0.5 ? (0.5-prog)*2*-260 : 0;   // 落ちてくる
+  const oy = GROUND + drop;
+  // 降臨スポットライト
+  if(prog < 0.6){
+    cx.save(); cx.globalAlpha = 0.5*(1-prog/0.6);
+    cx.fillStyle = '#fff';
+    cx.beginPath(); cx.moveTo(ox-16,0); cx.lineTo(ox+16,0); cx.lineTo(ox+70,GROUND); cx.lineTo(ox-70,GROUND); cx.fill();
+    cx.restore();
+  }
+  cx.save(); cx.translate(ox, oy); cx.scale(pl.opSide, 1);
+  // ハンマー振り（prog 0.5付近で振り下ろし）
+  const sw = clamp((prog-0.45)/0.2, 0, 1);
+  // 脚
+  cx.strokeStyle='#2e3a6e'; cx.lineWidth=8; cx.lineCap='round';
+  cx.beginPath(); cx.moveTo(-5,-30); cx.lineTo(-9,-2); cx.moveTo(5,-30); cx.lineTo(9,-2); cx.stroke();
+  cx.fillStyle='#1e1e1e'; cx.fillRect(-13,-4,12,4); cx.fillRect(2,-4,12,4);
+  // 胴（白T＋紺ベスト）
+  cx.fillStyle='#f4f4ee'; roundRect(-15,-58,30,30,7); cx.fill();
+  cx.fillStyle='#2e3a6e';
+  cx.beginPath(); cx.moveTo(-15,-58); cx.lineTo(-5,-58); cx.lineTo(-6,-28); cx.lineTo(-15,-28); cx.fill();
+  cx.beginPath(); cx.moveTo(15,-58); cx.lineTo(5,-58); cx.lineTo(6,-28); cx.lineTo(15,-28); cx.fill();
+  cx.fillStyle='#d8262b'; cx.fillRect(6,-54,3.5,3.5);
+  // 腕＋大ハンマー
+  const ha = lerp(-2.4, -0.2, sw);
+  cx.strokeStyle='#e8a877'; cx.lineWidth=8;
+  cx.beginPath(); cx.moveTo(4,-52); cx.lineTo(14+Math.cos(ha)*8,-44+Math.sin(ha)*8); cx.stroke();
+  cx.save(); cx.translate(14,-46); cx.rotate(ha);
+  cx.fillStyle='#8a5a2a'; cx.fillRect(0,-3,46,6);
+  cx.translate(46,0);
+  cx.save(); roundRect(-10,-16,26,32,6); cx.fillStyle=PINK; cx.fill(); cx.clip();
+  cx.fillStyle='#fff'; cx.beginPath(); cx.arc(-2,-7,4,0,7); cx.fill(); cx.beginPath(); cx.arc(8,3,4,0,7); cx.fill();
+  cx.restore();
+  cx.strokeStyle=PINK_D; cx.lineWidth=2; roundRect(-10,-16,26,32,6); cx.stroke();
+  cx.restore();
+  // 頭（白帽子・黒ひげ）
+  const hx=4, hy=-66;
+  cx.fillStyle='#dd9863'; cx.beginPath(); cx.arc(hx,hy,10,0,7); cx.fill();
+  cx.fillStyle='#f8f8f4'; cx.beginPath(); cx.arc(hx,hy-3,10.5,Math.PI,0); cx.fill();
+  cx.beginPath(); cx.ellipse(hx,hy-3,10.5,3.4,0,0,7); cx.fill();
+  cx.fillStyle='#2a2622'; cx.beginPath(); cx.ellipse(hx+3,hy+4,3.6,1.8,0.25,0,7); cx.fill();
+  cx.beginPath(); cx.ellipse(hx+6,hy+8,3,1.6,0,0,7); cx.fill();
+  cx.fillStyle='#2a1a10'; cx.beginPath(); cx.arc(hx+3,hy+1,1.4,0,7); cx.fill(); cx.beginPath(); cx.arc(hx+8,hy+1,1.4,0,7); cx.fill();
+  cx.restore();
+  // セリフ
+  if(prog < 0.5){
+    cx.fillStyle='#ffe14d'; cx.font='bold 18px '+FONT; cx.textAlign='center';
+    cx.strokeStyle='rgba(0,0,0,.6)'; cx.lineWidth=4;
+    cx.strokeText('楽勝です！',ox,oy-120); cx.fillText('楽勝です！',ox,oy-120);
+  }
+}
+
 function drawTouch(){
   cx.textBaseline='middle';
-  for(const k in TB){ const b=TB[k];
-    cx.globalAlpha=0.45; cx.fillStyle='#10101c'; cx.beginPath(); cx.arc(b.x,b.y,b.r,0,7); cx.fill();
-    cx.strokeStyle = k==='bite'?'#ffe14d':'#fff'; cx.lineWidth=3; cx.beginPath(); cx.arc(b.x,b.y,b.r,0,7); cx.stroke();
-    cx.fillStyle='#fff'; cx.font='bold '+Math.round(b.r*0.8)+'px '+FONT; cx.textAlign='center';
-    cx.fillText(b.label,b.x,b.y+2); cx.globalAlpha=1; }
+  const me = myPlayer();
+  for(const k in TB){
+    if(k === 'special' && !canSpecial(me)) continue;
+    const b=TB[k];
+    const glow = k==='special';
+    cx.globalAlpha=0.45; cx.fillStyle = glow?'#7a1010':'#10101c'; cx.beginPath(); cx.arc(b.x,b.y,b.r,0,7); cx.fill();
+    cx.strokeStyle = glow && Math.floor(performance.now()/250)%2===0 ? '#ffe14d' : '#fff';
+    cx.lineWidth=3; cx.beginPath(); cx.arc(b.x,b.y,b.r,0,7); cx.stroke();
+    cx.fillStyle='#fff'; cx.font='bold '+Math.round(b.r*0.7)+'px '+FONT; cx.textAlign='center';
+    cx.fillText(b.label,b.x,b.y+2); cx.globalAlpha=1;
+  }
+  // 噛みつき操作のヒント
+  cx.globalAlpha=0.5; cx.fillStyle='#fff'; cx.font='bold 13px '+FONT; cx.textAlign='center';
+  cx.fillText('画面タップで噛みつき', W/2, H-22); cx.globalAlpha=1;
   cx.textBaseline='alphabetic';
 }
 
@@ -559,9 +863,17 @@ function drawResult(){
   cx.strokeText(main,W/2,H/2-30); cx.fillText(main,W/2,H/2-30);
   cx.fillStyle='#fff'; cx.font='bold 22px '+FONT;
   cx.fillText('P1 ' + Math.ceil(S.p1.hp) + '　-　' + Math.ceil(S.p2.hp) + ' P2', W/2, H/2+18);
-  cx.font='18px '+FONT;
-  if(net.isHost){ if(Math.floor(performance.now()/500)%2===0) cx.fillText(touchMode?'画面タップでもう一戦':'R キーでもう一戦', W/2, H/2+60); }
-  else cx.fillText('ホストの再戦を待っています…', W/2, H/2+60);
+  // ボタン：もう一戦（ホスト/CPUのみ）／メニュー
+  const drawBtn = (b, label, col, on) => {
+    cx.globalAlpha = on ? 1 : 0.4;
+    cx.fillStyle = col; roundRect(b.x,b.y,b.w,b.h,12); cx.fill();
+    cx.fillStyle = '#fff'; cx.font='bold 20px '+FONT; cx.textAlign='center'; cx.textBaseline='middle';
+    cx.fillText(label, b.x+b.w/2, b.y+b.h/2+1);
+    cx.textBaseline='alphabetic'; cx.globalAlpha = 1;
+  };
+  if(net.isHost) drawBtn(RBTN_AGAIN, '🔁 もう一戦', '#ff2e92', true);
+  else { cx.fillStyle='#fff'; cx.font='17px '+FONT; cx.fillText('ホストの再戦を待っています…', RBTN_AGAIN.x+RBTN_AGAIN.w/2, RBTN_AGAIN.y+30); }
+  drawBtn(RBTN_MENU, '🏠 メニュー', '#3a6ab8', true);
 }
 
 function drawMenuBg(){
@@ -575,6 +887,7 @@ const lobby = document.getElementById('lobby');
 const menu = document.getElementById('menu');
 const hostBox = document.getElementById('hostBox');
 const joinBox = document.getElementById('joinBox');
+const cpuBox = document.getElementById('cpuBox');
 const codeShow = document.getElementById('codeShow');
 const hostMsg = document.getElementById('hostMsg');
 const joinMsg = document.getElementById('joinMsg');
@@ -583,7 +896,21 @@ function showBox(which){
   menu.style.display = which==='menu' ? 'flex':'none';
   hostBox.style.display = which==='hostBox' ? 'block':'none';
   joinBox.style.display = which==='joinBox' ? 'block':'none';
+  cpuBox.style.display = which==='cpuBox' ? 'block':'none';
 }
+// CPU対戦（ネット不要・ひとりで遊べる）
+function startCPU(level){
+  cpuLevel = level; vsCPU = true; net.isHost = true; net.connected = false;
+  net.conn = null;
+  try{ ac().resume && ac().resume(); }catch(_){}
+  lobby.classList.add('hidden');
+  startMatch();
+}
+document.getElementById('bCPU').onclick = () => showBox('cpuBox');
+document.getElementById('bCpu0').onclick = () => startCPU(0);
+document.getElementById('bCpu1').onclick = () => startCPU(1);
+document.getElementById('bCpu2').onclick = () => startCPU(2);
+document.getElementById('bCpuCancel').onclick = () => showBox('menu');
 document.getElementById('bHost').onclick = () => { ensurePeerJS(()=>startHost()); };
 document.getElementById('bJoin').onclick = () => startJoin();
 document.getElementById('bConnect').onclick = () => ensurePeerJS(()=>doConnect());
