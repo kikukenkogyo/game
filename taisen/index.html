@@ -84,7 +84,9 @@ let MC = PINK, MCD = PINK_D, MCL = PINK_L;
 const ARENA_L = 40, ARENA_R = W - 40;
 const ID_PREFIX = 'kikuken-taisen-';
 const ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';   // 紛らわしい文字を除外
-const MATCH_TIME = 90;
+const MATCH_TIME = 45;        // 短く濃密に（45秒）
+const FINAL_RUSH = 12;        // 残りこの秒数からダメージ加速＆演出
+const PINCH_HP = 28;          // 瀕死ライン
 
 function fit(){
   const s = Math.min(innerWidth / W, innerHeight / H) * 0.97;
@@ -105,6 +107,18 @@ function sfxClank(){ try{ const a=ac(),t=a.currentTime,o=a.createOscillator(),g=
   env(g,t,0.14,0.12); o.connect(g).connect(a.destination); o.start(t); o.stop(t+0.13);}catch(e){} }
 function sfxBell(){ try{ const a=ac(),t=a.currentTime; [660,880,1100].forEach((f,i)=>{const o=a.createOscillator(),g=a.createGain();
   o.type='triangle'; o.frequency.value=f; env(g,t+i*0.1,0.2,0.3); o.connect(g).connect(a.destination); o.start(t+i*0.1); o.stop(t+i*0.1+0.32);});}catch(e){} }
+function sfxThump(){ try{ const a=ac(),t=a.currentTime,o=a.createOscillator(),g=a.createGain();
+  o.type='sine'; o.frequency.setValueAtTime(120,t); o.frequency.exponentialRampToValueAtTime(45,t+0.16);
+  env(g,t,0.32,0.18); o.connect(g).connect(a.destination); o.start(t); o.stop(t+0.2);}catch(e){} }
+function sfxTick(){ try{ const a=ac(),t=a.currentTime,o=a.createOscillator(),g=a.createGain();
+  o.type='square'; o.frequency.value=1500; env(g,t,0.12,0.06); o.connect(g).connect(a.destination); o.start(t); o.stop(t+0.07);}catch(e){} }
+function sfxKO(){ try{ const a=ac(),t=a.currentTime;
+  const n=a.createBufferSource(), buf=a.createBuffer(1,a.sampleRate*0.5,a.sampleRate), d=buf.getChannelData(0);
+  for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*(1-i/d.length); n.buffer=buf;
+  const f=a.createBiquadFilter(); f.type='lowpass'; f.frequency.setValueAtTime(1200,t); f.frequency.exponentialRampToValueAtTime(80,t+0.5);
+  const g=a.createGain(); env(g,t,0.5,0.5); n.connect(f).connect(g).connect(a.destination); n.start(t);
+  const o=a.createOscillator(),g2=a.createGain(); o.type='sawtooth'; o.frequency.setValueAtTime(400,t); o.frequency.exponentialRampToValueAtTime(60,t+0.4);
+  env(g2,t,0.25,0.45); o.connect(g2).connect(a.destination); o.start(t); o.stop(t+0.46);}catch(e){} }
 
 // ---------- 入力 ----------
 const keys = {};
@@ -274,12 +288,17 @@ function mkPlayer(x, face){
 }
 // 三本勝負（先取2勝）の状態
 let roundWins = [0, 0], roundNo = 1, seriesOver = false, roundEndT = 0;
+let sudden = false;           // サドンデス（延長・次の一撃で決着）
+let koT = 0;                  // KO演出タイマー（ローカル）
+let hbT = 0, tickSec = -1;    // 心音・カウントダウン音の管理
 function startMatch(){   // 1ラウンド開始（roundWins は保持）
   S = { p1: mkPlayer(ARENA_L + 130, 1), p2: mkPlayer(ARENA_R - 130, -1),
         t: 0, timer: MATCH_TIME, over: 0, scored: false, fx: [], waves: [] };
-  countdown = 3.2;
+  countdown = 3.2; sudden = false; koT = 0; tickSec = -1;
   phase = 'play';
 }
+// ラスト数秒はダメージ加速（決着を早める＝ヒリつき）
+function dmgScale(){ return (S && !S.over && S.timer <= FINAL_RUSH) ? 1.35 : 1; }
 function startSeries(){  // シリーズ（三本勝負）開始
   roundWins = [0, 0]; roundNo = 1; seriesOver = false; roundEndT = 0;
   startMatch();
@@ -350,9 +369,11 @@ function attackResolve(att, def, dt, fx){
   // ※ ただ接触（体当たり）するだけではダメージ無し（旋回モードのみ spinContact で有効）
 }
 function hitPlayer(def, dir, dmg, fx, fxx, fxy){
+  dmg = sudden ? 999 : dmg * dmgScale();                 // サドンデスは一撃／終盤は加速
   def.hp = Math.max(0, def.hp - dmg);
-  def.inv = 0.5; def.hitFlash = 0.3;
-  def.vx = dir * 240; def.vy = -150; def.onGround = false;
+  def.inv = 0.35; def.hitFlash = 0.3;                    // 無敵を短く＝連続した圧力
+  const kb = 1 + (1 - def.hp/100) * 0.6;                 // 体力が減るほど大きく吹っ飛ぶ
+  def.vx = dir * 240 * kb; def.vy = -150 * kb; def.onGround = false;
   fx.push({ x: fxx, y: fxy, t: 0, big: dmg >= 14 });
 }
 // ミサイル：通常は長押しチャージ→離して発射。特大ゲージ満タン時はボタン押すだけで特大発射
@@ -440,8 +461,9 @@ function stepSim(dt){
     const vTop = w.big ? 120 : 92;                 // 特大は背が高く避けにくい
     const vHit = (w.y > def.y - vTop) && (w.y < def.y + 14);
     if(Math.abs(w.x - def.x) < hr && vHit && def.inv <= 0){
-      def.hp = Math.max(0, def.hp - (w.big ? 32 : 18));
-      def.inv = 0.5; def.hitFlash = 0.35;
+      const md = sudden ? 999 : (w.big ? 32 : 18) * dmgScale();
+      def.hp = Math.max(0, def.hp - md);
+      def.inv = 0.45; def.hitFlash = 0.35;
       def.vx = Math.sign(w.vx) * (w.big ? 420 : 300); def.vy = w.big ? -240 : -160; def.onGround = false;
       S.fx.push({ x: w.x, y: w.y, t: 0, big: true });
       if(w.big) shake = Math.max(shake, 14);
@@ -461,14 +483,22 @@ function stepSim(dt){
   if(S.p1.hp <= 0 && S.p2.hp <= 0) S.over = 3;       // 相打ち
   else if(S.p1.hp <= 0) S.over = 2;
   else if(S.p2.hp <= 0) S.over = 1;
-  else if(S.timer <= 0) S.over = S.p1.hp === S.p2.hp ? 3 : (S.p1.hp > S.p2.hp ? 1 : 2);
+  else if(S.timer <= 0){
+    // 時間切れ：接戦なら「サドンデス」へ延長（次の一撃で決着）
+    if(!sudden && Math.abs(S.p1.hp - S.p2.hp) <= 22){
+      sudden = true; S.timer = 20; shake = Math.max(shake, 16); sfxBell();
+    }else{
+      S.over = S.p1.hp === S.p2.hp ? 3 : (S.p1.hp > S.p2.hp ? 1 : 2);
+    }
+  }
   if(S.over && !S.scored){
     S.scored = true;
     phase = 'result'; sfxBell();
+    if((S.p1.hp <= 0 || S.p2.hp <= 0)){ koT = 1.0; sfxKO(); }   // KO決着は派手に
     if(S.over === 1) roundWins[0]++;
     else if(S.over === 2) roundWins[1]++;
     if(roundWins[0] >= 2 || roundWins[1] >= 2) seriesOver = true;
-    roundEndT = 2.8;   // 次ラウンドまでの待ち（シリーズ継続時）
+    roundEndT = 3.0;
   }
 }
 function hostInputFor(side){
@@ -535,7 +565,7 @@ function broadcastState(force){
                     +(p.hitFlash.toFixed(2)), Math.round(p.tread),
                     +(p.missCharge.toFixed(2)), +(p.spinT.toFixed(2)), +(p.spin.toFixed(2)), Math.round(p.superGauge), p.pinchUsed?1:0];
   send({ t:'s', s:{ a:enc(S.p1), b:enc(S.p2), tm:+S.timer.toFixed(1), ov:S.over, cd:+countdown.toFixed(2),
-                    sk:Math.round(shake), rw:roundWins.slice(), rn:roundNo, so:seriesOver?1:0,
+                    sk:Math.round(shake), rw:roundWins.slice(), rn:roundNo, so:seriesOver?1:0, sd:sudden?1:0,
                     wv: S.waves.map(w=>[Math.round(w.x),Math.round(w.y),w.vx<0?-1:1,w.owner,w.big?1:0]),
                     fx: S.fx.filter(f=>f.t<0.05).map(f=>[Math.round(f.x),Math.round(f.y),f.big?1:0,f.dodge?1:0]) } });
 }
@@ -544,11 +574,17 @@ function decodeNet(){
   if(!S) S = { p1: mkPlayer(0,1), p2: mkPlayer(0,-1), t:0, timer:MATCH_TIME, over:0, fx:[], waves:[] };
   // ゲスト側：受信値へスムーズ補間
   smoothToward(S.p1, s.a); smoothToward(S.p2, s.b);
+  const prevOver = S.over;
   S.timer = s.tm; S.over = s.ov; countdown = s.cd; shake = s.sk || 0;
   if(s.rw){ roundWins = s.rw; roundNo = s.rn || 1; seriesOver = !!s.so; }
+  const wasSudden = sudden; sudden = !!s.sd;
+  if(sudden && !wasSudden) sfxBell();   // サドンデス突入音
   S.waves = (s.wv || []).map(w=>({ x:w[0], y:w[1], vx:w[2], owner:w[3], big:!!w[4], t:0 }));
   if(s.fx) for(const f of s.fx) S.fx.push({ x:f[0], y:f[1], t:0, big:!!f[2], dodge:!!f[3] });
-  if(S.over && phase !== 'result'){ phase = 'result'; sfxBell(); }
+  if(S.over && !prevOver){
+    phase = 'result'; sfxBell();
+    if(S.p1.hp <= 0 || S.p2.hp <= 0){ koT = 1.0; sfxKO(); }
+  }
 }
 function smoothToward(pl, arr){
   // 位置は補間、状態系は即時反映
@@ -595,6 +631,18 @@ function loop(now){
     }
     // FXの寿命
     if(S) for(let i=S.fx.length-1;i>=0;i--){ S.fx[i].t += raw; if(S.fx[i].t>0.5) S.fx.splice(i,1); }
+    if(koT > 0) koT = Math.max(0, koT - raw);
+    // 緊張演出の音：自分が瀕死なら心音、残り時間カウントダウン
+    if(S && phase === 'play' && countdown <= 0 && !S.over){
+      const me = (net.isHost ? S.p1 : S.p2);
+      if(me && me.hp > 0 && me.hp <= PINCH_HP){
+        const rate = 0.42 + (me.hp/PINCH_HP)*0.4;     // HPが低いほど速い鼓動
+        hbT -= raw; if(hbT <= 0){ hbT = rate; sfxThump(); }
+      } else hbT = 0;
+      // ラスト＆サドンデスの秒読み
+      const sec = Math.ceil(S.timer);
+      if((S.timer <= FINAL_RUSH || sudden) && sec !== tickSec && sec >= 0){ tickSec = sec; if(sec <= 10) sfxTick(); }
+    }
   }
   draw();
   requestAnimationFrame(loop);
@@ -624,6 +672,13 @@ function draw(){
   const shx = shake > 0 ? (Math.random()*2-1)*shake : 0, shy = shake > 0 ? (Math.random()*2-1)*shake : 0;
   cx.save();
   cx.translate(shx, shy);
+  // KO決着のズームイン（敗者へ寄る）
+  if(koT > 0){
+    const z = 1 + (koT/1.0) * 0.5;                       // 1.5倍→1.0倍へ
+    const loser = S.p1.hp <= 0 ? S.p1 : S.p2;
+    const fx = clamp(loser.x, 200, W-200), fy = GROUND - 50;
+    cx.translate(fx, fy); cx.scale(z, z); cx.translate(-fx, -fy);
+  }
 
   // 波動拳の弾
   for(const w of S.waves) drawWave(w);
@@ -645,9 +700,45 @@ function draw(){
     }
     cx.restore();
   }
-  cx.restore(); // shake
+  cx.restore(); // shake / zoom
+
+  // ===== 緊張演出オーバーレイ =====
+  const meP = net.isHost ? S.p1 : S.p2, foeP = net.isHost ? S.p2 : S.p1;
+  // 瀕死ビネット（自分が瀕死＝赤強め、相手が瀕死＝薄く）
+  if(!S.over){
+    const pulse = 0.5 + 0.5*Math.sin(performance.now()/180);
+    if(meP.hp > 0 && meP.hp <= PINCH_HP){
+      const k = (1 - meP.hp/PINCH_HP);
+      const g = cx.createRadialGradient(W/2,H/2,H*0.35,W/2,H/2,H*0.75);
+      g.addColorStop(0,'rgba(255,0,0,0)'); g.addColorStop(1,'rgba(220,0,0,'+(0.18+0.28*k*pulse)+')');
+      cx.fillStyle=g; cx.fillRect(0,0,W,H);
+    }
+    if(foeP.hp > 0 && foeP.hp <= PINCH_HP){
+      cx.fillStyle='rgba(255,200,60,'+(0.06+0.05*pulse)+')'; cx.fillRect(0,0,W,H);
+    }
+    // ラストラッシュ（残りわずか）
+    if(S.timer <= FINAL_RUSH && countdown <= 0){
+      const r = 28 + 12*pulse;
+      cx.fillStyle='rgba(255,40,40,.5)'; cx.fillRect(0,0,W,r*0.5); cx.fillRect(0,H-r*0.5,W,r*0.5);
+      cx.textAlign='center'; cx.fillStyle = pulse>0.5?'#ff3030':'#fff';
+      cx.font='bold 22px '+FONT;
+      cx.fillText(sudden ? '⚡ サドンデス！ 次の一撃で決着！⚡' : '🔥 ラストラッシュ！ ダメージUP！🔥', W/2, H-58);
+    }
+  }
+
   drawHUD();
   if(touchMode && !S.over) drawTouch();
+
+  // KOフラッシュ＆文字
+  if(koT > 0){
+    if(koT > 0.82){ cx.fillStyle='rgba(255,255,255,'+((koT-0.82)/0.18*0.9)+')'; cx.fillRect(0,0,W,H); }
+    cx.textAlign='center';
+    const sc = 1 + (1-koT)*0.3;
+    cx.save(); cx.translate(W/2,H*0.34); cx.scale(sc,sc);
+    cx.fillStyle='#ff2e2e'; cx.strokeStyle='#fff'; cx.lineWidth=8; cx.font='bold 92px '+FONT;
+    cx.strokeText('K.O.!',0,0); cx.fillText('K.O.!',0,0);
+    cx.restore();
+  }
 
   if(countdown > 0 && !S.over){
     const n = Math.ceil(countdown - 0.2);
@@ -658,7 +749,7 @@ function draw(){
     if(n <= 0){ cx.font = 'bold 90px ' + FONT; }
     cx.strokeText(txt, W/2, H/2+30); cx.fillText(txt, W/2, H/2+30);
   }
-  if(S.over) drawResult();
+  if(S.over && koT <= 0.5) drawResult();   // KO演出が落ち着いてから結果表示
 }
 
 function youSide(){ return net.isHost ? 1 : 2; }
