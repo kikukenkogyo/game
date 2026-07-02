@@ -10,18 +10,16 @@
 <style>
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
   html,body{margin:0;padding:0;height:100%;}
-  :root{
-    --bg-sha:#FFF3CC; --ac-sha:#D99B06; --nm-sha:#8A6403;
-  }
+  :root{ --bg-sha:#FFF3CC; --ac-sha:#D99B06; --nm-sha:#8A6403; }
   body{font-family:'Noto Sans JP',-apple-system,BlinkMacSystemFont,sans-serif;color:#1F2421;}
   .root{min-height:100vh;background:#EDEBE6;display:flex;flex-direction:column;padding:3.6vh 3.4vw 3vh;}
   .head{flex:0 0 auto;text-align:center;padding-bottom:6vh;}
   .head h1{margin:0;font-weight:900;font-size:clamp(28px,3.4vw,48px);letter-spacing:.02em;line-height:1.1;}
   .head p{margin:1.6vh 0 0;font-weight:500;font-size:clamp(14px,1.5vw,20px);color:#8A867C;letter-spacing:.02em;}
   .grid{flex:1;display:grid;grid-template-columns:minmax(0,620px);gap:6.6vw;align-content:safe center;justify-content:center;width:100%;max-width:1280px;max-height:660px;margin:0 auto;padding:1.2vh 1vw 2vh;}
-  .card{text-decoration:none;color:inherit;border-radius:22px;border:2px solid;box-shadow:0 22px 40px rgba(31,36,33,.32),0 8px 14px rgba(31,36,33,.22),0 2px 4px rgba(31,36,33,.18);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:3vh 2vw 2.4vh;transition:transform .1s ease,box-shadow .1s ease;}
+  .card{text-decoration:none;color:inherit;border-radius:22px;border:2px solid;box-shadow:0 22px 40px rgba(31,36,33,.32),0 8px 14px rgba(31,36,33,.22),0 2px 4px rgba(31,36,33,.18);position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:3vh 2vw 2.4vh;transition:transform .1s ease,box-shadow .1s ease;}
   .card:active{transform:translateY(6px) scale(.965);box-shadow:0 6px 12px rgba(31,36,33,.22);}
-  .icon{width:clamp(134px,12.5vw,188px);height:clamp(134px,12.5vw,188px);border-radius:50%;display:flex;align-items:center;justify-content:center;}
+  .icon{position:relative;width:clamp(134px,12.5vw,188px);height:clamp(134px,12.5vw,188px);border-radius:50%;display:flex;align-items:center;justify-content:center;}
   .title{font-weight:900;font-size:clamp(30px,3.3vw,48px);line-height:1.15;margin-top:3vh;display:flex;align-items:center;justify-content:center;white-space:nowrap;}
   .chips{display:flex;gap:7px;flex-wrap:nowrap;justify-content:center;margin-top:1.8vh;}
   .chips span{border:2px solid;border-radius:999px;padding:5px 11px;font-weight:700;font-size:clamp(13px,1.4vw,20px);white-space:nowrap;}
@@ -33,6 +31,9 @@
   .c-sha .chips span{border-color:var(--ac-sha);color:var(--nm-sha);}
   .c-sha .report{color:#5C4F2E;}
   .c-sha .report .lbl{color:var(--ac-sha);}
+  .bandaid{position:absolute;left:50%;top:50%;width:74%;transform-origin:center;filter:drop-shadow(0 3px 5px rgba(0,0,0,.28));pointer-events:none;opacity:0;transform:translate(-50%,-50%) rotate(28deg) scale(0);}
+  .card.applied .bandaid{opacity:1;transform:translate(-50%,-50%) rotate(28deg) scale(1);animation:bandPop .42s cubic-bezier(.34,1.56,.64,1);}
+  @keyframes bandPop{0%{transform:translate(-50%,-50%) rotate(28deg) scale(0);}60%{transform:translate(-50%,-50%) rotate(28deg) scale(1.14);}100%{transform:translate(-50%,-50%) rotate(28deg) scale(1);}}
   @media (max-width:680px), (max-height:560px){
     .root{padding:16px 12px;min-height:100dvh;justify-content:safe center;}
     .head{padding-bottom:34px;}
@@ -49,48 +50,63 @@
 </head>
 <body>
 <div class="root">
-
   <header class="head">
     <h1>タッチして報告してください</h1>
     <p>※アプリ立ち上げ直後は接続速度が遅くなることがあります</p>
   </header>
-
   <div class="grid">
-
-    <a class="card c-sha" href="https://kikuken-pages45451588454332.notion.site/3913c51f6fc6800f8b28c231e57f1121?v=3913c51f6fc680dfad1d000cee020a4a&source=copy_link" target="_self">
+    <a class="card c-sha" data-band href="https://kikuken-pages45451588454332.notion.site/3913c51f6fc6800f8b28c231e57f1121?v=3913c51f6fc680dfad1d000cee020a4a&source=copy_link" target="_self">
       <div class="icon">
-        <svg viewBox="0 0 100 100" width="86%" height="86%">
-          <!-- 荷台（ダンプベッド・少し持ち上がり） -->
-          <g transform="rotate(-7 60 52)">
-            <path d="M34 34 h52 q3 0 3 3 v18 q0 3 -3 3 h-52 q-3 0 -3 -3 v-18 q0 -3 3 -3 z" fill="#F2B705" stroke="#8A6403" stroke-width="2.5"/>
-            <path d="M40 34 v24 M50 34 v24 M60 34 v24 M70 34 v24 M80 34 v24" stroke="#D99B06" stroke-width="2"/>
+        <svg viewBox="0 0 104 104" width="88%" height="88%">
+          <g stroke="#7A5A03" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round">
+            <g transform="rotate(-9 66 52)">
+              <path d="M36 30 h50 q4 0 4 4 v20 q0 4 -4 4 h-50 q-4 0 -4 -4 v-20 q0 -4 4 -4 z" fill="#F7C531"/>
+              <path d="M44 32 v24 M55 32 v24 M66 32 v24 M77 32 v24" stroke="#DFA50A" stroke-width="2.4"/>
+              <path d="M86 30 l6 2 v22 l-6 2" fill="#F2B705"/>
+            </g>
+            <path d="M36 56 l10 -8" stroke="#7A5A03" stroke-width="4"/>
+            <path d="M10 38 h14 q3 0 4.5 3 l4.5 9 q1 2 1 4 v8 H10 q-4 0 -4 -4 V42 q0 -4 4 -4 z" fill="#F7C531"/>
+            <path d="M13 42 h9 l4 8 h-13 z" fill="#BEE3F7"/>
+            <rect x="24" y="52" width="7" height="9" rx="1.5" fill="#DFA50A"/>
+            <rect x="4" y="62" width="94" height="8" rx="4" fill="#4A3B33"/>
+            <rect x="3" y="60" width="8" height="11" rx="2.5" fill="#C7C2B8"/>
           </g>
-          <!-- シャーシ -->
-          <rect x="8" y="64" width="84" height="7" rx="3" fill="#33282A"/>
-          <!-- キャブ -->
-          <path d="M9 46 h16 q4 0 4 4 v14 H9 q-3 0 -3 -3 v-11 q0 -4 3 -4 z" fill="#F2B705" stroke="#8A6403" stroke-width="2.5"/>
-          <rect x="12" y="50" width="10" height="7" rx="1.5" fill="#fff"/>
-          <!-- テールゲート開き -->
-          <path d="M89 51 l6 12 l-4 1.6 l-5 -11 z" fill="#F2B705" stroke="#8A6403" stroke-width="2"/>
-          <!-- 落ちる土砂 -->
-          <g fill="#A98A5B">
-            <circle cx="92" cy="70" r="2.6"/>
-            <circle cx="96" cy="77" r="2.2"/>
-            <circle cx="90" cy="79" r="1.8"/>
+          <g fill="#B98F55">
+            <circle cx="97" cy="63" r="2.8"/>
+            <circle cx="92" cy="72" r="2.3"/>
+            <circle cx="99" cy="78" r="1.9"/>
           </g>
-          <!-- 車輪 -->
-          <circle cx="20" cy="76" r="9" fill="#33282A"/><circle cx="20" cy="76" r="3.6" fill="#fff"/>
-          <circle cx="56" cy="76" r="9" fill="#33282A"/><circle cx="56" cy="76" r="3.6" fill="#fff"/>
-          <circle cx="76" cy="76" r="9" fill="#33282A"/><circle cx="76" cy="76" r="3.6" fill="#fff"/>
+          <circle cx="20" cy="77" r="11" fill="#4A3B33"/><circle cx="20" cy="77" r="4.8" fill="#fff"/><circle cx="20" cy="77" r="1.9" fill="#4A3B33"/>
+          <circle cx="60" cy="77" r="11" fill="#4A3B33"/><circle cx="60" cy="77" r="4.8" fill="#fff"/><circle cx="60" cy="77" r="1.9" fill="#4A3B33"/>
+          <circle cx="82" cy="77" r="11" fill="#4A3B33"/><circle cx="82" cy="77" r="4.8" fill="#fff"/><circle cx="82" cy="77" r="1.9" fill="#4A3B33"/>
         </svg>
+        <div class="bandaid">
+          <svg viewBox="0 0 120 42" width="100%" height="auto" style="display:block;">
+            <rect x="2" y="7" width="116" height="28" rx="14" fill="#EBB089"/>
+            <rect x="43" y="10" width="34" height="22" rx="5" fill="#FBE7D4"/>
+            <g fill="rgba(255,255,255,.6)">
+              <circle cx="14" cy="14" r="1.5"/><circle cx="22" cy="14" r="1.5"/><circle cx="14" cy="21" r="1.5"/><circle cx="22" cy="21" r="1.5"/><circle cx="14" cy="28" r="1.5"/><circle cx="22" cy="28" r="1.5"/>
+              <circle cx="98" cy="14" r="1.5"/><circle cx="106" cy="14" r="1.5"/><circle cx="98" cy="21" r="1.5"/><circle cx="106" cy="21" r="1.5"/><circle cx="98" cy="28" r="1.5"/><circle cx="106" cy="28" r="1.5"/>
+            </g>
+          </svg>
+        </div>
       </div>
       <div class="title">運搬車両</div>
       <div class="chips"><span>故障</span><span>修理</span><span>復旧</span></div>
       <div class="report"><span class="lbl">報告対象</span>ダンプ・回送車・乗用車（全車両）</div>
     </a>
-
   </div>
-
 </div>
+<script>
+  document.querySelectorAll('.card[data-band]').forEach(function(card){
+    card.addEventListener('click', function(e){
+      if (card.classList.contains('applied')) return;
+      e.preventDefault();
+      card.classList.add('applied');
+      var href = card.getAttribute('href');
+      setTimeout(function(){ window.location.href = href; }, 620);
+    });
+  });
+</script>
 </body>
 </html>
