@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>報告メニュー（運搬車両管理責任者）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;height:100%;}
+  :root{
+    --bg-sha:#FFF3CC; --ac-sha:#D99B06; --nm-sha:#8A6403;
+  }
+  body{font-family:'Noto Sans JP',-apple-system,BlinkMacSystemFont,sans-serif;color:#1F2421;}
+  .root{min-height:100vh;background:#EDEBE6;display:flex;flex-direction:column;padding:3.6vh 3.4vw 3vh;}
+  .head{flex:0 0 auto;text-align:center;padding-bottom:6vh;}
+  .head h1{margin:0;font-weight:900;font-size:clamp(28px,3.4vw,48px);letter-spacing:.02em;line-height:1.1;}
+  .head p{margin:1.6vh 0 0;font-weight:500;font-size:clamp(14px,1.5vw,20px);color:#8A867C;letter-spacing:.02em;}
+  .grid{flex:1;display:grid;grid-template-columns:minmax(0,620px);gap:6.6vw;align-content:safe center;justify-content:center;width:100%;max-width:1280px;max-height:660px;margin:0 auto;padding:1.2vh 1vw 2vh;}
+  .card{text-decoration:none;color:inherit;border-radius:22px;border:2px solid;box-shadow:0 22px 40px rgba(31,36,33,.32),0 8px 14px rgba(31,36,33,.22),0 2px 4px rgba(31,36,33,.18);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:3vh 2vw 2.4vh;transition:transform .1s ease,box-shadow .1s ease;}
+  .card:active{transform:translateY(6px) scale(.965);box-shadow:0 6px 12px rgba(31,36,33,.22);}
+  .icon{width:clamp(134px,12.5vw,188px);height:clamp(134px,12.5vw,188px);border-radius:50%;display:flex;align-items:center;justify-content:center;}
+  .title{font-weight:900;font-size:clamp(30px,3.3vw,48px);line-height:1.15;margin-top:3vh;display:flex;align-items:center;justify-content:center;white-space:nowrap;}
+  .chips{display:flex;gap:7px;flex-wrap:nowrap;justify-content:center;margin-top:1.8vh;}
+  .chips span{border:2px solid;border-radius:999px;padding:5px 11px;font-weight:700;font-size:clamp(13px,1.4vw,20px);white-space:nowrap;}
+  .report{margin-top:2.6vh;padding-top:2vh;width:100%;font-size:clamp(16px,1.75vw,24px);font-weight:500;line-height:1.55;}
+  .report .lbl{display:block;font-weight:700;font-size:.78em;letter-spacing:.1em;margin-bottom:6px;}
+  .c-sha{background:var(--bg-sha);border-color:var(--ac-sha);}
+  .c-sha .icon{background:#F7D566;}
+  .c-sha .title{color:var(--nm-sha);}
+  .c-sha .chips span{border-color:var(--ac-sha);color:var(--nm-sha);}
+  .c-sha .report{color:#5C4F2E;}
+  .c-sha .report .lbl{color:var(--ac-sha);}
+  @media (max-width:680px), (max-height:560px){
+    .root{padding:16px 12px;min-height:100dvh;justify-content:safe center;}
+    .head{padding-bottom:34px;}
+    .head h1{font-size:21px;}
+    .grid{flex:0 0 auto;gap:12px;max-width:100%;max-height:none;padding:0;}
+    .card{padding:16px 10px;border-radius:16px;box-shadow:0 6px 16px rgba(31,36,33,.18);}
+    .icon{width:86px;height:86px;}
+    .title{font-size:18px;margin-top:10px;}
+    .chips{margin-top:8px;gap:5px;flex-wrap:wrap;}
+    .chips span{font-size:11px;padding:3px 7px;border-width:1.5px;}
+    .report{font-size:11.5px;margin-top:10px;padding-top:9px;}
+  }
+</style>
+</head>
+<body>
+<div class="root">
+
+  <header class="head">
+    <h1>タッチして報告してください</h1>
+    <p>※アプリ立ち上げ直後は接続速度が遅くなることがあります</p>
+  </header>
+
+  <div class="grid">
+
+    <a class="card c-sha" href="https://app.notion.com/p/kikuken-pages45451588454332/3913c51f6fc6802d87b3e92ff5e63341?pvs=106" target="_self">
+      <div class="icon">
+        <svg viewBox="0 0 100 100" width="86%" height="86%">
+          <!-- 荷台（ダンプベッド・少し持ち上がり） -->
+          <g transform="rotate(-7 60 52)">
+            <path d="M34 34 h52 q3 0 3 3 v18 q0 3 -3 3 h-52 q-3 0 -3 -3 v-18 q0 -3 3 -3 z" fill="#F2B705" stroke="#8A6403" stroke-width="2.5"/>
+            <path d="M40 34 v24 M50 34 v24 M60 34 v24 M70 34 v24 M80 34 v24" stroke="#D99B06" stroke-width="2"/>
+          </g>
+          <!-- シャーシ -->
+          <rect x="8" y="64" width="84" height="7" rx="3" fill="#33282A"/>
+          <!-- キャブ -->
+          <path d="M9 46 h16 q4 0 4 4 v14 H9 q-3 0 -3 -3 v-11 q0 -4 3 -4 z" fill="#F2B705" stroke="#8A6403" stroke-width="2.5"/>
+          <rect x="12" y="50" width="10" height="7" rx="1.5" fill="#fff"/>
+          <!-- テールゲート開き -->
+          <path d="M89 51 l6 12 l-4 1.6 l-5 -11 z" fill="#F2B705" stroke="#8A6403" stroke-width="2"/>
+          <!-- 落ちる土砂 -->
+          <g fill="#A98A5B">
+            <circle cx="92" cy="70" r="2.6"/>
+            <circle cx="96" cy="77" r="2.2"/>
+            <circle cx="90" cy="79" r="1.8"/>
+          </g>
+          <!-- 車輪 -->
+          <circle cx="20" cy="76" r="9" fill="#33282A"/><circle cx="20" cy="76" r="3.6" fill="#fff"/>
+          <circle cx="56" cy="76" r="9" fill="#33282A"/><circle cx="56" cy="76" r="3.6" fill="#fff"/>
+          <circle cx="76" cy="76" r="9" fill="#33282A"/><circle cx="76" cy="76" r="3.6" fill="#fff"/>
+        </svg>
+      </div>
+      <div class="title">運搬車両</div>
+      <div class="chips"><span>故障</span><span>修理</span><span>復旧</span></div>
+      <div class="report"><span class="lbl">報告対象</span>ダンプ・回送車・乗用車（全車両）</div>
+    </a>
+
+  </div>
+
+</div>
+</body>
+</html>
