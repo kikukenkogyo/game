@@ -1,0 +1,1215 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>菊建クラッシャー 対戦 ～水玉重機タイマン～</title>
+<style>
+  html,body{margin:0;padding:0;background:#241a30;height:100%;overflow:hidden;overscroll-behavior:none;font-family:"Hiragino Kaku Gothic ProN",Meiryo,sans-serif;}
+  #wrap{position:relative;display:flex;align-items:center;justify-content:center;height:100%;}
+  canvas{background:#9ad6f0;box-shadow:0 0 40px rgba(255,46,146,.4);border-radius:8px;touch-action:none;-webkit-user-select:none;user-select:none;}
+  #lobby{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    color:#fff;text-align:center;gap:14px;padding:18px;box-sizing:border-box;}
+  #lobby.hidden{display:none;}
+  #lobby h1{font-size:clamp(22px,6vw,40px);margin:0;color:#fff;text-shadow:0 2px 0 #d4147a,0 0 18px rgba(255,46,146,.6);}
+  #lobby .sub{font-size:13px;opacity:.9;margin-top:-6px;}
+  .btn{background:#ff2e92;color:#fff;border:none;border-radius:12px;padding:14px 26px;font-size:18px;font-weight:bold;
+    box-shadow:0 4px 0 #b81570;cursor:pointer;min-width:220px;}
+  .btn:active{transform:translateY(3px);box-shadow:0 1px 0 #b81570;}
+  .btn.sub{background:#3a6ab8;box-shadow:0 4px 0 #244a86;}
+  .btn.ghost{background:#555;box-shadow:0 4px 0 #333;min-width:0;padding:10px 18px;font-size:14px;}
+  .panel{background:rgba(0,0,0,.45);border:2px solid #ff2e92;border-radius:14px;padding:18px 22px;max-width:520px;}
+  .code{font-size:clamp(34px,11vw,64px);font-weight:bold;letter-spacing:.18em;color:#ffe14d;margin:6px 0;}
+  input#joincode{font-size:30px;letter-spacing:.2em;text-align:center;text-transform:uppercase;width:200px;
+    padding:8px;border-radius:10px;border:3px solid #ff2e92;background:#fff;color:#333;font-weight:bold;}
+  .row{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;}
+  .msg{font-size:14px;min-height:18px;color:#ffd0e4;}
+  .hint{font-size:12px;opacity:.75;max-width:460px;line-height:1.6;}
+  a{color:#9effc8;}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="cv" width="960" height="540"></canvas>
+  <div id="lobby">
+    <h1>菊建クラッシャー 対戦</h1>
+    <div class="sub">～ ピンク水玉重機でタイマン勝負！ ～</div>
+    <div id="menu" class="row">
+      <button class="btn" id="bCPU" style="background:#ff8a3a;box-shadow:0 4px 0 #c25e1a;">🤖 CPUと対戦（ひとり）</button>
+      <button class="btn" id="bHost">🏠 部屋を作る（ホスト）</button>
+      <button class="btn sub" id="bJoin">🔑 部屋に入る（ゲスト）</button>
+    </div>
+    <div id="cpuBox" class="panel" style="display:none;">
+      <div>CPUの強さを選んでね</div>
+      <div class="row" style="margin-top:12px;">
+        <button class="btn" id="bCpu0" style="background:#7ad36b;box-shadow:0 4px 0 #4e9243;min-width:0;">よわい</button>
+        <button class="btn" id="bCpu1" style="background:#ffb02e;box-shadow:0 4px 0 #c2841a;min-width:0;">ふつう</button>
+        <button class="btn" id="bCpu2" style="background:#ff4d4d;box-shadow:0 4px 0 #c21a1a;min-width:0;">つよい</button>
+      </div>
+      <button class="btn ghost" id="bCpuCancel" style="margin-top:12px;">もどる</button>
+    </div>
+    <div id="hostBox" class="panel" style="display:none;">
+      <div>あいことば（相手に伝えてね）</div>
+      <div class="code" id="codeShow">----</div>
+      <div class="msg" id="hostMsg">相手の入室を待っています…</div>
+      <button class="btn ghost" id="bHostCancel">もどる</button>
+    </div>
+    <div id="joinBox" class="panel" style="display:none;">
+      <div>あいことばを入力</div>
+      <input id="joincode" maxlength="4" autocapitalize="characters" autocomplete="off" placeholder="____">
+      <div class="row" style="margin-top:10px;">
+        <button class="btn" id="bConnect">つなぐ</button>
+        <button class="btn ghost" id="bJoinCancel">もどる</button>
+      </div>
+      <div class="msg" id="joinMsg"></div>
+    </div>
+    <div class="hint" id="hint">
+      ※ オンライン対戦にはインターネット接続が必要です。2人とも同じ「あいことば」でつながります。<br>
+      うまくつながらない時は、両者で一度「もどる」→もう一度お試しください。
+    </div>
+  </div>
+</div>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+"use strict";
+const cv = document.getElementById('cv');
+const cx = cv.getContext('2d');
+const W = 960, H = 540, GROUND = H - 78;
+const FONT = '"Hiragino Kaku Gothic ProN", Meiryo, sans-serif';
+const PINK = '#ff2e92', PINK_D = '#d4147a', PINK_L = '#ff8fc6';
+// P2（ゲスト／CPU）は青系で色分け
+const BLUE = '#2e9bff', BLUE_D = '#1668c8', BLUE_L = '#9ed4ff';
+// 描画中の機体カラー（drawMachine で切り替え）
+let MC = PINK, MCD = PINK_D, MCL = PINK_L;
+const ARENA_L = 40, ARENA_R = W - 40;
+const ID_PREFIX = 'kikuken-taisen-';
+const ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';   // 紛らわしい文字を除外
+const MATCH_TIME = 45;        // 短く濃密に（45秒）
+const FINAL_RUSH = 12;        // 残りこの秒数からダメージ加速＆演出
+const PINCH_HP = 28;          // 瀕死ライン
+
+function fit(){
+  const s = Math.min(innerWidth / W, innerHeight / H) * 0.97;
+  cv.style.width = (W * s) + 'px';
+  cv.style.height = (H * s) + 'px';
+}
+addEventListener('resize', fit); fit();
+
+// ---------- サウンド ----------
+let AC = null;
+function ac(){ if(!AC){ AC = new (window.AudioContext || window.webkitAudioContext)(); } return AC; }
+function env(g,t,a,d){ g.gain.setValueAtTime(a,t); g.gain.exponentialRampToValueAtTime(0.001,t+d); }
+function sfxHit(){ try{ const a=ac(),t=a.currentTime,o=a.createOscillator(),g=a.createGain();
+  o.type='square'; o.frequency.setValueAtTime(160,t); o.frequency.exponentialRampToValueAtTime(50,t+0.15);
+  env(g,t,0.25,0.16); o.connect(g).connect(a.destination); o.start(t); o.stop(t+0.18);}catch(e){} }
+function sfxClank(){ try{ const a=ac(),t=a.currentTime,o=a.createOscillator(),g=a.createGain();
+  o.type='triangle'; o.frequency.setValueAtTime(900,t); o.frequency.exponentialRampToValueAtTime(180,t+0.1);
+  env(g,t,0.14,0.12); o.connect(g).connect(a.destination); o.start(t); o.stop(t+0.13);}catch(e){} }
+function sfxBell(){ try{ const a=ac(),t=a.currentTime; [660,880,1100].forEach((f,i)=>{const o=a.createOscillator(),g=a.createGain();
+  o.type='triangle'; o.frequency.value=f; env(g,t+i*0.1,0.2,0.3); o.connect(g).connect(a.destination); o.start(t+i*0.1); o.stop(t+i*0.1+0.32);});}catch(e){} }
+function sfxThump(){ try{ const a=ac(),t=a.currentTime,o=a.createOscillator(),g=a.createGain();
+  o.type='sine'; o.frequency.setValueAtTime(120,t); o.frequency.exponentialRampToValueAtTime(45,t+0.16);
+  env(g,t,0.32,0.18); o.connect(g).connect(a.destination); o.start(t); o.stop(t+0.2);}catch(e){} }
+function sfxTick(){ try{ const a=ac(),t=a.currentTime,o=a.createOscillator(),g=a.createGain();
+  o.type='square'; o.frequency.value=1500; env(g,t,0.12,0.06); o.connect(g).connect(a.destination); o.start(t); o.stop(t+0.07);}catch(e){} }
+function sfxKO(){ try{ const a=ac(),t=a.currentTime;
+  const n=a.createBufferSource(), buf=a.createBuffer(1,a.sampleRate*0.5,a.sampleRate), d=buf.getChannelData(0);
+  for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*(1-i/d.length); n.buffer=buf;
+  const f=a.createBiquadFilter(); f.type='lowpass'; f.frequency.setValueAtTime(1200,t); f.frequency.exponentialRampToValueAtTime(80,t+0.5);
+  const g=a.createGain(); env(g,t,0.5,0.5); n.connect(f).connect(g).connect(a.destination); n.start(t);
+  const o=a.createOscillator(),g2=a.createGain(); o.type='sawtooth'; o.frequency.setValueAtTime(400,t); o.frequency.exponentialRampToValueAtTime(60,t+0.4);
+  env(g2,t,0.25,0.45); o.connect(g2).connect(a.destination); o.start(t); o.stop(t+0.46);}catch(e){} }
+
+// ---------- 入力 ----------
+const keys = {};
+addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space'].includes(e.code)) e.preventDefault();
+  if(e.code === 'KeyR' && phase === 'result' && seriesOver && net.isHost) hostRestart();
+  if((e.code === 'KeyM' || e.code === 'Escape') && phase === 'result') returnToMenu();
+});
+addEventListener('keyup', e => { keys[e.code] = false; });
+
+// タッチボタン（移動＆ジャンプは左側／必殺は右側／噛みつきは画面タップ）
+const TB = {
+  left:    { x: 66,      y: H - 56, r: 46, label: '◀' },
+  right:   { x: 178,     y: H - 56, r: 46, label: '▶' },
+  jump:    { x: W - 178, y: H - 56, r: 46, label: '▲' },
+  missile: { x: W - 66,  y: H - 56, r: 50, label: '🚀' },
+};
+let touchMode = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+const touchHit = {};       // touch.identifier → ボタン名 or 'field'
+let mouseHoldField = false; // PCクリック長押し（フィールド）
+function tpos(t){ const r = cv.getBoundingClientRect(); return { x:(t.clientX-r.left)*W/r.width, y:(t.clientY-r.top)*H/r.height }; }
+function btnAt(x,y){
+  for(const k in TB){ const b=TB[k]; if(Math.hypot(x-b.x,y-b.y)<=b.r+10) return k; }
+  return null;
+}
+function fieldHeld(){   // 画面（ボタン以外）が押されているか＝噛み/スマッシュ入力
+  if(mouseHoldField || keys['KeyK']) return true;
+  for(const id in touchHit) if(touchHit[id] === 'field') return true;
+  return false;
+}
+cv.addEventListener('touchstart', e => {
+  e.preventDefault(); touchMode = true; try{ ac().resume&&ac().resume(); }catch(_){}
+  if(phase === 'result'){ const p0=tpos(e.changedTouches[0]); handleResultTap(p0.x,p0.y); return; }
+  for(const t of e.changedTouches){
+    const p=tpos(t), b=btnAt(p.x,p.y);
+    if(b){ touchHit[t.identifier]=b; keys['T_'+b]=true; }
+    else { touchHit[t.identifier]='field'; }   // ボタン以外を押す＝噛み/溜め
+  }
+}, {passive:false});
+cv.addEventListener('touchmove', e => { e.preventDefault(); }, {passive:false});
+function tend(e){ e.preventDefault(); for(const t of e.changedTouches){ const b=touchHit[t.identifier]; if(b && b!=='field') keys['T_'+b]=false; delete touchHit[t.identifier]; } }
+cv.addEventListener('touchend', tend, {passive:false});
+cv.addEventListener('touchcancel', tend, {passive:false});
+// PC：クリック長押しで噛み/溜め
+cv.addEventListener('mousedown', e => {
+  try{ ac().resume&&ac().resume(); }catch(_){}
+  if(phase === 'result'){ const r=cv.getBoundingClientRect(); handleResultTap((e.clientX-r.left)*W/r.width,(e.clientY-r.top)*H/r.height); return; }
+  if(e.button === 0) mouseHoldField = true;
+});
+addEventListener('mouseup', e => { if(e.button === 0) mouseHoldField = false; });
+// リザルトのボタン
+const RBTN_AGAIN = { x: W/2 - 210, y: H - 84, w: 200, h: 52 };
+const RBTN_MENU  = { x: W/2 + 10,  y: H - 84, w: 200, h: 52 };
+function ptIn(b,x,y){ return x>=b.x && x<=b.x+b.w && y>=b.y && y<=b.y+b.h; }
+function handleResultTap(x,y){
+  if(!seriesOver) return;            // ラウンド間は自動進行（タップ無効）
+  if(ptIn(RBTN_MENU,x,y)){ returnToMenu(); return; }
+  if(net.isHost) hostRestart();      // それ以外のタップで新シリーズ（ホスト）
+}
+function returnToMenu(){
+  if(vsCPU){ vsCPU=false; phase='menu'; S=null; lobby.classList.remove('hidden'); showBox('menu'); }
+  else peerLost('');
+}
+
+function localInput(){
+  return {
+    left:  !!(keys['ArrowLeft']||keys['KeyA']||keys['T_left']),
+    right: !!(keys['ArrowRight']||keys['KeyD']||keys['T_right']),
+    jump:  !!(keys['ArrowUp']||keys['KeyW']||keys['T_jump']),
+    hold:  fieldHeld(),   // 短く=噛み／長く溜めて離す=叩きつけ衝撃波
+    missile: !!(keys['Space']||keys['KeyJ']||keys['T_missile']),
+  };
+}
+function myPlayer(){ if(!S) return null; return net.isHost ? S.p1 : S.p2; }
+
+// ---------- ネットワーク（PeerJS / ホスト権限方式） ----------
+const net = {
+  peer: null, conn: null, isHost: false, connected: false,
+  remoteInput: { left:false, right:false, jump:false, hold:false, missile:false },
+  netState: null, lastRecv: 0,
+};
+function randCode(){ let s=''; for(let i=0;i<4;i++) s += ALPHA[Math.floor(Math.random()*ALPHA.length)]; return s; }
+
+function startHost(){
+  const code = randCode();
+  codeShow.textContent = code;
+  showBox('hostBox');
+  hostMsg.textContent = '通信の準備中…';
+  net.isHost = true;
+  try{
+    net.peer = new Peer(ID_PREFIX + code, { debug: 1 });
+  }catch(e){ hostMsg.textContent = '通信を開始できませんでした'; return; }
+  net.peer.on('open', () => { hostMsg.textContent = '相手の入室を待っています…'; });
+  net.peer.on('connection', c => { net.conn = c; wireConn(); });
+  net.peer.on('error', err => {
+    if(err.type === 'unavailable-id'){ // コード衝突→作り直し
+      try{ net.peer.destroy(); }catch(_){}
+      startHost();
+    }else{
+      hostMsg.textContent = '通信エラー：' + err.type + '（もどってやり直してください）';
+    }
+  });
+}
+function startJoin(){ showBox('joinBox'); joinMsg.textContent=''; setTimeout(()=>joincode.focus(),100); }
+function doConnect(){
+  const code = (joincode.value || '').toUpperCase().trim();
+  if(code.length !== 4){ joinMsg.textContent = '4文字のあいことばを入れてください'; return; }
+  joinMsg.textContent = 'つないでいます…';
+  net.isHost = false;
+  try{
+    net.peer = new Peer({ debug: 1 });
+  }catch(e){ joinMsg.textContent = '通信を開始できませんでした'; return; }
+  net.peer.on('open', () => {
+    const c = net.peer.connect(ID_PREFIX + code, { reliable: true });
+    net.conn = c; wireConn();
+  });
+  net.peer.on('error', err => {
+    joinMsg.textContent = (err.type === 'peer-unavailable')
+      ? 'その部屋が見つかりません（あいことばを確認）' : '通信エラー：' + err.type;
+  });
+}
+function wireConn(){
+  const c = net.conn;
+  c.on('open', () => {
+    net.connected = true;
+    lobby.classList.add('hidden');
+    try{ ac().resume&&ac().resume(); }catch(_){}
+    if(net.isHost){ startSeries(); broadcastState(true); }
+  });
+  c.on('data', d => {
+    try{
+      if(d.t === 'i'){ net.remoteInput = { left:!!d.l, right:!!d.r, jump:!!d.j, hold:!!d.h, missile:!!d.m }; }
+      else if(d.t === 's'){ net.netState = d.s; net.lastRecv = perfNow(); if(phase !== 'play' && !(S && S.over)) phase = 'play'; }
+      else if(d.t === 'rs'){ if(!net.isHost){ applyServerStart(d); } }
+      else if(d.t === 'bye'){ peerLost('相手が退出しました'); }
+    }catch(err){ /* 1通の不正データで接続を切らない */ }
+  });
+  c.on('close', () => peerLost('接続が切れました'));
+  c.on('error', () => peerLost('通信エラーが発生しました'));
+}
+function peerLost(msg){
+  net.connected = false;
+  vsCPU = false;
+  phase = 'menu';
+  lobby.classList.remove('hidden');
+  showBox('menu');
+  hostMsg.textContent = msg; joinMsg.textContent = msg;
+  try{ net.conn && net.conn.close(); }catch(_){}
+  try{ net.peer && net.peer.destroy(); }catch(_){}
+  net.peer = null; net.conn = null;
+}
+function send(obj){ try{ if(net.conn && net.connected) net.conn.send(obj); }catch(e){} }
+
+// ---------- 試合状態 ----------
+let phase = 'menu';   // menu / play / result
+let S = null;
+let countdown = 0;
+let vsCPU = false, cpuLevel = 1;
+// CPUの強さ（反応・攻撃頻度・回避・波動/必殺の使用率）
+const CPU_PARAM = [
+  { biteRange: 86, biteGap: 0.85, react: 0.45, jump: 0.25, dodge: 0.25, useWave: 0.2, useSp: 0.4, speed: 0.82 }, // よわい
+  { biteRange: 94, biteGap: 0.58, react: 0.22, jump: 0.5,  dodge: 0.6,  useWave: 0.6, useSp: 0.8, speed: 0.95 }, // ふつう
+  { biteRange: 100, biteGap: 0.4, react: 0.10, jump: 0.7,  dodge: 0.9,  useWave: 0.9, useSp: 1.0, speed: 1.05 }, // つよい
+];
+function mkPlayer(x, face){
+  return { x, y: GROUND, vx:0, vy:0, onGround:true, hp:100, facing:face,
+           biteT:0, biteCd:0, ramCd:0, inv:0, hitFlash:0, jaw:0.2, tread:0, pitch:0,
+           missCharge:0, missCd:0, _pMissile:false,
+           spinT:0, spin:0, spinHitCd:0, lastDir:0, altCount:0, altT:0, _pLeft:false, _pRight:false,
+           superGauge:0, stompCd:0, swingCd:0, _faceLast:face, pinchUsed:false,
+           holdT:0, _pHold:false, smashT:0, smashCd:0, _smashFired:false,
+           ai:null };
+}
+// 三本勝負（先取2勝）の状態
+let roundWins = [0, 0], roundNo = 1, seriesOver = false, roundEndT = 0;
+let sudden = false;           // サドンデス（延長・次の一撃で決着）
+let koT = 0;                  // KO演出タイマー（ローカル）
+let hbT = 0, tickSec = -1;    // 心音・カウントダウン音の管理
+function startMatch(){   // 1ラウンド開始（roundWins は保持）
+  S = { p1: mkPlayer(ARENA_L + 130, 1), p2: mkPlayer(ARENA_R - 130, -1),
+        t: 0, timer: MATCH_TIME, over: 0, scored: false, fx: [], waves: [], shocks: [] };
+  countdown = 3.2; sudden = false; koT = 0; tickSec = -1;
+  phase = 'play';
+}
+// ラスト数秒はダメージ加速（決着を早める＝ヒリつき）
+function dmgScale(){ return (S && !S.over && S.timer <= FINAL_RUSH) ? 1.35 : 1; }
+function startSeries(){  // シリーズ（三本勝負）開始
+  roundWins = [0, 0]; roundNo = 1; seriesOver = false; roundEndT = 0;
+  startMatch();
+}
+function applyServerStart(d){   // ゲスト：ホストの新シリーズに同期
+  roundWins = [0, 0]; roundNo = 1; seriesOver = false; roundEndT = 0;
+  startMatch();
+}
+function hostRestart(){ startSeries(); send({ t:'rs' }); }
+
+// ---------- シミュレーション（ホストのみが進める純粋関数的処理） ----------
+function clamp(v,a,b){ return v<a?a:v>b?b:v; }
+function rnd(a,b){ return a + Math.random()*(b-a); }
+function lerp(a,b,t){ return a+(b-a)*t; }
+function stepPlayerKinematics(pl, inp, dt){
+  let mv = (inp.right?1:0) - (inp.left?1:0);
+  const target = mv * 250;
+  pl.vx = lerp(pl.vx, target, Math.min(1, dt*2.6));
+  if(Math.abs(pl.vx) < 4 && mv === 0) pl.vx = 0;
+  if(mv !== 0) pl.facing = mv > 0 ? 1 : -1;
+  if(inp.jump && pl.onGround){ pl.vy = -500; pl.onGround = false; }
+  pl.vy += 1250 * dt;
+  pl.x += pl.vx * dt; pl.y += pl.vy * dt;
+  pl.x = clamp(pl.x, ARENA_L + 30, ARENA_R - 30);
+  if(pl.y >= GROUND){ pl.y = GROUND; pl.vy = 0; pl.onGround = true; }
+  pl.tread += pl.vx * dt;
+  pl.pitch = lerp(pl.pitch, clamp(-pl.vx*0.0001,-0.05,0.05), Math.min(1,dt*5));
+  if(pl.biteCd > 0) pl.biteCd -= dt;
+  if(pl.ramCd > 0) pl.ramCd -= dt;
+  if(pl.smashCd > 0) pl.smashCd -= dt;
+  if(pl.inv > 0) pl.inv -= dt;
+  if(pl.hitFlash > 0) pl.hitFlash -= dt;
+  // 画面を「短く=噛み／長く溜めて離す=叩きつけ衝撃波」
+  const SMASH_HOLD = 0.42;
+  if(inp.hold){
+    if(pl.smashCd <= 0 && pl.smashT <= 0) pl.holdT = Math.min(1.0, pl.holdT + dt);
+  }else{
+    if(pl._pHold && pl.smashCd <= 0 && pl.smashT <= 0){
+      if(pl.holdT >= SMASH_HOLD){
+        // 叩きつけ衝撃波 発動
+        pl.smashT = 0.34; pl.smashCd = 1.0; pl._smashFired = false;
+      }else if(pl.biteCd <= 0 && pl.biteT <= 0){
+        pl.biteT = 0.32; pl.biteCd = 0.6;      // 通常の噛み
+      }
+    }
+    pl.holdT = 0;
+  }
+  pl._pHold = inp.hold;
+  if(pl.biteT > 0) pl.biteT -= dt;
+  if(pl.smashT > 0) pl.smashT -= dt;
+  // 顎アニメ（噛み＝開閉／溜め＝開けて構える）
+  let jt = 0.2 + Math.sin(pl.tread*0.05)*0.02;
+  if(pl.biteT > 0) jt = pl.biteT > 0.16 ? 0.55 : 0.0;
+  else if(pl.holdT > 0.1) jt = 0.5;
+  pl.jaw = lerp(pl.jaw, jt, Math.min(1, dt*16));
+}
+function attackResolve(att, def, dt, fx){
+  if(att.stompCd > 0) att.stompCd -= dt;
+  if(att.swingCd > 0) att.swingCd -= dt;
+  // 噛みつき：クラッシャー開閉中の判定（かなり甘め＝当てやすい）
+  if(att.biteT > 0.02 && att.biteT < 0.32 && def.inv <= 0){
+    const dx = def.x - att.x;
+    const towardOk = att.facing > 0 ? dx > -85 : dx < 85;   // ほぼ近接ならOK
+    if(Math.abs(dx) < 150 && towardOk && Math.abs(def.y - att.y) < 105){
+      hitPlayer(def, Math.sign(dx) || att.facing, 16, fx, att.x + att.facing * 40, att.y - 50);
+      sfxHit();
+    }
+  }
+  // ① 踏みつけ：相手の上から落下して頭を踏む
+  if(att.vy > 60 && att.stompCd <= 0 && def.inv <= 0 &&
+     Math.abs(att.x - def.x) < 54 && (def.y - att.y) > 26 && (def.y - att.y) < 120){
+    att.stompCd = 0.5;
+    hitPlayer(def, Math.sign(att.x - def.x) || att.facing, 14, fx, def.x, def.y - 72);
+    att.vy = -340; att.onGround = false;     // 反動でピョン
+    sfxHit();
+  }
+  // ② 旋回して腕を当てる：素早く向きを変えた瞬間、腕の通り道に相手がいれば
+  if(att.spinT <= 0 && att.facing !== att._faceLast && att.swingCd <= 0 && def.inv <= 0 &&
+     Math.abs(def.x - att.x) < 105 && Math.abs(def.y - att.y) < 85){
+    att.swingCd = 0.45;
+    hitPlayer(def, Math.sign(def.x - att.x) || att.facing, 12, fx, (att.x + def.x) / 2, att.y - 50);
+    sfxHit();
+  }
+  att._faceLast = att.facing;
+  // ※ ただ接触（体当たり）するだけではダメージ無し（旋回モードのみ spinContact で有効）
+}
+function hitPlayer(def, dir, dmg, fx, fxx, fxy){
+  dmg = sudden ? 999 : dmg * dmgScale();                 // サドンデスは一撃／終盤は加速
+  def.hp = Math.max(0, def.hp - dmg);
+  def.inv = 0.35; def.hitFlash = 0.3;                    // 無敵を短く＝連続した圧力
+  const kb = 1 + (1 - def.hp/100) * 0.6;                 // 体力が減るほど大きく吹っ飛ぶ
+  def.vx = dir * 240 * kb; def.vy = -150 * kb; def.onGround = false;
+  fx.push({ x: fxx, y: fxy, t: 0, big: dmg >= 14 });
+}
+// ミサイル：通常は長押しチャージ→離して発射。特大ゲージ満タン時はボタン押すだけで特大発射
+function stepMissile(pl, inp, dt){
+  const foe = pl === S.p1 ? S.p2 : S.p1;
+  const toFoe = Math.sign(foe.x - pl.x) || pl.facing || 1;
+  const owner = pl === S.p1 ? 1 : 2;
+  const pressEdge = inp.missile && !pl._pMissile;
+  // 特大ミサイル：①ゲージ満タン ②瀕死（HP25以下）は一発だけ → ボタンを押すだけで発射
+  const canSuper = pl.superGauge >= 100;
+  const canPinch = pl.hp > 0 && pl.hp <= 25 && !pl.pinchUsed;
+  if((canSuper || canPinch) && pressEdge && pl.missCd <= 0){
+    pl.facing = toFoe;
+    S.waves.push({ x: pl.x + toFoe * 58, y: GROUND - 44, vx: toFoe * 600, owner, t: 0, missile: true, big: true });
+    if(canSuper) pl.superGauge = 0; else pl.pinchUsed = true;   // 瀕死ぶんは1回限り
+    pl.missCd = 0.9; pl.missCharge = 0;
+    shake = Math.max(shake, 10); sfxBell();
+    pl._pMissile = inp.missile; return;
+  }
+  if(pl.missCd > 0){ pl.missCd -= dt; pl.missCharge = 0; pl._pMissile = inp.missile; return; }
+  if(inp.missile){
+    pl.missCharge = Math.min(1, pl.missCharge + dt / 0.7);   // 長押しチャージ
+  }else{
+    if(pl._pMissile && pl.missCharge >= 0.5){                // 離して発射
+      pl.facing = toFoe;
+      S.waves.push({ x: pl.x + toFoe * 50, y: GROUND - 30, vx: toFoe * 540, owner, t: 0, missile: true });
+      pl.missCd = 0.8;
+      sfxBell();
+    }
+    pl.missCharge = 0;
+  }
+  pl._pMissile = inp.missile;
+}
+// 旋回コマンド：◀▶を素早く交互に8回（▷◁×4）で5秒間スピン状態
+function stepSpin(pl, inp, dt){
+  if(pl.spinT > 0){ pl.spinT -= dt; pl.spin += dt * 11; }   // 横回転（旋回体ヨー）用
+  pl.altT += dt;
+  if(pl.altT > 0.55){ pl.altCount = 0; pl.lastDir = 0; }   // 間が空いたらリセット
+  let dir = 0;
+  if(inp.left && !pl._pLeft) dir = -1;
+  else if(inp.right && !pl._pRight) dir = 1;
+  if(dir !== 0){
+    if(pl.lastDir !== 0 && dir !== pl.lastDir) pl.altCount++;
+    else pl.altCount = 1;
+    pl.lastDir = dir; pl.altT = 0;
+    if(pl.altCount >= 8 && pl.spinT <= 0){
+      pl.spinT = 5; pl.spin = 0; pl.altCount = 0;
+      shake = Math.max(shake, 10); sfxBell();
+      S.fx.push({ x: pl.x, y: pl.y - 50, t: 0, big: true });
+    }
+  }
+  pl._pLeft = inp.left; pl._pRight = inp.right;
+}
+// スピン中の接触ダメージ
+function spinContact(att, def, dt){
+  if(att.spinT <= 0) return;
+  att.spinHitCd -= dt;
+  if(Math.abs(att.x - def.x) < 66 && Math.abs(att.y - def.y) < 60 && def.inv <= 0 && att.spinHitCd <= 0){
+    att.spinHitCd = 0.3;
+    hitPlayer(def, Math.sign(def.x - att.x) || att.facing, 9, S.fx, (att.x + def.x) / 2, att.y - 46);
+    att.superGauge = Math.min(100, att.superGauge + 22);   // 旋回でダメージ→特大ゲージ蓄積
+    sfxHit();
+  }
+}
+// 叩きつけ：振り下ろしの瞬間に衝撃波を発生
+function stepSmash(pl, dt){
+  if(pl.smashT > 0 && !pl._smashFired && pl.smashT <= 0.20){
+    pl._smashFired = true;
+    pl.onGround = true; pl.vy = 0;          // 叩きつけは踏ん張る
+    S.shocks.push({ x: pl.x + pl.facing * 30, t: 0, r: 0, owner: pl === S.p1 ? 1 : 2, hit: false });
+    shake = Math.max(shake, 16); sfxThump(); sfxClank();
+    for(let k=0;k<2;k++) S.fx.push({ x: pl.x + pl.facing*40, y: GROUND-8, t: 0, big: true });
+  }
+}
+let shake = 0;
+function stepSim(dt){
+  S.t += dt;
+  if(shake > 0) shake = Math.max(0, shake - dt * 40);
+  if(countdown > 0) return;            // カウントダウン中は動かない
+  if(S.over) return;
+  const in1 = hostInputFor(1);
+  const in2 = vsCPU ? cpuInput(S.p2, S.p1, dt) : hostInputFor(2);
+  stepPlayerKinematics(S.p1, in1, dt);
+  stepPlayerKinematics(S.p2, in2, dt);
+  stepMissile(S.p1, in1, dt); stepMissile(S.p2, in2, dt);
+  stepSpin(S.p1, in1, dt);    stepSpin(S.p2, in2, dt);
+  attackResolve(S.p1, S.p2, dt, S.fx);
+  attackResolve(S.p2, S.p1, dt, S.fx);
+  spinContact(S.p1, S.p2, dt); spinContact(S.p2, S.p1, dt);
+  stepSmash(S.p1, dt); stepSmash(S.p2, dt);
+  // 叩きつけの地を這う衝撃波
+  for(let i = S.shocks.length - 1; i >= 0; i--){
+    const sh = S.shocks[i]; sh.t += dt; sh.r = sh.t * 760;
+    const def = sh.owner === 1 ? S.p2 : S.p1;
+    if(!sh.hit && Math.abs(def.x - sh.x) <= sh.r + 26 && def.y > GROUND - 46 && def.inv <= 0){
+      sh.hit = true;                        // 地上/低空の相手にヒット（高ジャンプは避けられる）
+      const dmg = sudden ? 999 : 22 * dmgScale();
+      def.hp = Math.max(0, def.hp - dmg);
+      def.inv = 0.5; def.hitFlash = 0.4;
+      const dir = Math.sign(def.x - sh.x) || 1;
+      def.vx = dir * 360; def.vy = -300; def.onGround = false;
+      S.fx.push({ x: def.x, y: def.y - 50, t: 0, big: true });
+      shake = Math.max(shake, 12); sfxHit();
+    }
+    if(sh.r > 300) S.shocks.splice(i, 1);
+  }
+  // ミサイルの弾
+  for(let i = S.waves.length - 1; i >= 0; i--){
+    const w = S.waves[i]; w.t += dt; w.x += w.vx * dt;
+    const def = w.owner === 1 ? S.p2 : S.p1;
+    const hr = w.big ? 60 : 44;                    // 特大は当たり判定も大きい
+    const vTop = w.big ? 120 : 92;                 // 特大は背が高く避けにくい
+    const vHit = (w.y > def.y - vTop) && (w.y < def.y + 14);
+    if(Math.abs(w.x - def.x) < hr && vHit && def.inv <= 0){
+      const md = sudden ? 999 : (w.big ? 32 : 18) * dmgScale();
+      def.hp = Math.max(0, def.hp - md);
+      def.inv = 0.45; def.hitFlash = 0.35;
+      def.vx = Math.sign(w.vx) * (w.big ? 420 : 300); def.vy = w.big ? -240 : -160; def.onGround = false;
+      S.fx.push({ x: w.x, y: w.y, t: 0, big: true });
+      if(w.big) shake = Math.max(shake, 14);
+      sfxHit();
+      S.waves.splice(i, 1); continue;
+    }
+    // ジャンプで低空ミサイルを避けた → 回避した側に特大ゲージ
+    if(!w.counted && !w.big && Math.abs(w.x - def.x) < 30 && !vHit && def.inv <= 0){
+      w.counted = true;
+      def.superGauge = Math.min(100, def.superGauge + 25);
+      S.fx.push({ x: def.x, y: def.y - 70, t: 0, big: false, dodge: true });
+    }
+    if(w.x < ARENA_L - 60 || w.x > ARENA_R + 60) S.waves.splice(i, 1);
+  }
+  S.timer = Math.max(0, S.timer - dt);
+  // 勝敗
+  if(S.p1.hp <= 0 && S.p2.hp <= 0) S.over = 3;       // 相打ち
+  else if(S.p1.hp <= 0) S.over = 2;
+  else if(S.p2.hp <= 0) S.over = 1;
+  else if(S.timer <= 0){
+    // 時間切れ：接戦なら「サドンデス」へ延長（次の一撃で決着）
+    if(!sudden && Math.abs(S.p1.hp - S.p2.hp) <= 22){
+      sudden = true; S.timer = 20; shake = Math.max(shake, 16); sfxBell();
+    }else{
+      S.over = S.p1.hp === S.p2.hp ? 3 : (S.p1.hp > S.p2.hp ? 1 : 2);
+    }
+  }
+  if(S.over && !S.scored){
+    S.scored = true;
+    phase = 'result'; sfxBell();
+    if((S.p1.hp <= 0 || S.p2.hp <= 0)){ koT = 1.0; sfxKO(); }   // KO決着は派手に
+    if(S.over === 1) roundWins[0]++;
+    else if(S.over === 2) roundWins[1]++;
+    if(roundWins[0] >= 2 || roundWins[1] >= 2) seriesOver = true;
+    roundEndT = 3.0;
+  }
+}
+function hostInputFor(side){
+  // ホスト=P1が自分、ゲスト側入力=P2（リモート）
+  return side === 1 ? localInput() : net.remoteInput;
+}
+// ---------- CPU（AI） ----------
+function cpuInput(me, foe, dt){
+  const P = CPU_PARAM[cpuLevel] || CPU_PARAM[1];
+  const ai = me.ai || (me.ai = { biteWait: 0.5, jumpWait: rnd(1,3), react: 0, want: {} });
+  const dx = foe.x - me.x, adx = Math.abs(dx);
+  const toFoe = Math.sign(dx) || -1;
+  let left=false, right=false, jump=false, hold=false, missile=false;
+
+  // 反応ディレイ（弱いほど鈍い）
+  ai.react -= dt;
+  if(ai.react <= 0){ ai.react = P.react; ai.targetAdx = 60; }
+
+  // 間合い調整
+  const range = 60;
+  if(adx > range + 10){ if(toFoe>0) right=true; else left=true; }
+  else if(adx < range - 22){ if(toFoe>0) left=true; else right=true; }
+
+  // 間合い内では必ず相手を向く（空振り防止）
+  if(adx < 130) me.facing = toFoe;
+  // 叩きつけ：たまに溜めて衝撃波（相手が地上で接近時）
+  ai.biteWait -= dt;
+  if(ai.smashHold > 0){
+    ai.smashHold -= dt; hold = true;                       // 溜め中（離すと発動）
+  }else if(ai.smashWait !== undefined && (ai.smashWait -= dt) <= 0 && me.smashCd <= 0 &&
+           adx < 150 && foe.onGround && Math.random() < (P.useWave*0.5)){
+    ai.smashHold = 0.55; ai.smashWait = rnd(3.5, 6);       // 溜め開始
+  }else if(adx < P.biteRange && Math.abs(me.y - foe.y) < 70 && me.biteCd <= 0 && me.biteT <= 0 && me.smashT <= 0 && ai.biteWait <= 0){
+    hold = true; ai.biteWait = P.biteGap + rnd(0,0.12);    // 1フレームだけ押す＝噛み
+  }
+  if(ai.smashWait === undefined) ai.smashWait = rnd(2,4);
+
+  // 相手の波動弾をジャンプで回避
+  let incoming = null;
+  for(const w of S.waves){ if(w.owner !== (me===S.p1?1:2)){
+    if(Math.sign(w.vx) === toFoe*-1 && Math.abs(w.x - me.x) < 170){ incoming = w; }
+  }}
+  ai.jumpWait -= dt;
+  if(me.onGround){
+    if(incoming && Math.random() < P.dodge){ jump = true; ai.jumpWait = rnd(0.8,1.6); }
+    else if(ai.jumpWait <= 0 && Math.random() < P.jump * dt * 3){ jump = true; ai.jumpWait = rnd(1.5,3.5); }
+  }
+
+  // ミサイル：長押しでチャージ→離して発射。チャージ中は後退して間合いを作る
+  if(ai.missHold > 0){
+    ai.missHold -= dt;
+    missile = true; hold = false;
+    left = false; right = false;
+    if(toFoe > 0) left = true; else right = true;   // 相手と逆方向へ下がる
+    if(ai.missHold <= 0) missile = false;           // 離す＝発射
+  }else if(ai.smashHold <= 0){
+    ai.missWait = (ai.missWait || rnd(1,3)) - dt;
+    if(ai.missWait <= 0 && me.missCd <= 0 && Math.random() < P.useWave){
+      ai.missHold = 0.65; ai.missWait = rnd(2.5, 4.5);
+      missile = true; hold = false;
+    }
+  }
+
+  return { left, right, jump, hold, missile };
+}
+function broadcastState(force){
+  if(!S) return;
+  const enc = p => [Math.round(p.x), Math.round(p.y), Math.round(p.vx), Math.round(p.hp),
+                    p.facing, +(p.biteT.toFixed(2)), +(p.jaw.toFixed(2)), +(p.inv.toFixed(2)),
+                    +(p.hitFlash.toFixed(2)), Math.round(p.tread),
+                    +(p.missCharge.toFixed(2)), +(p.spinT.toFixed(2)), +(p.spin.toFixed(2)), Math.round(p.superGauge), p.pinchUsed?1:0,
+                    +(p.holdT.toFixed(2)), +(p.smashT.toFixed(2))];
+  send({ t:'s', s:{ a:enc(S.p1), b:enc(S.p2), tm:+S.timer.toFixed(1), ov:S.over, cd:+countdown.toFixed(2),
+                    sk:Math.round(shake), rw:roundWins.slice(), rn:roundNo, so:seriesOver?1:0, sd:sudden?1:0,
+                    sh: S.shocks.map(s=>[Math.round(s.x),Math.round(s.r),s.owner]),
+                    wv: S.waves.map(w=>[Math.round(w.x),Math.round(w.y),w.vx<0?-1:1,w.owner,w.big?1:0]),
+                    fx: S.fx.filter(f=>f.t<0.05).map(f=>[Math.round(f.x),Math.round(f.y),f.big?1:0,f.dodge?1:0]) } });
+}
+function decodeNet(){
+  const s = net.netState; if(!s) return;
+  if(!S) S = { p1: mkPlayer(0,1), p2: mkPlayer(0,-1), t:0, timer:MATCH_TIME, over:0, fx:[], waves:[], shocks:[] };
+  // ゲスト側：受信値へスムーズ補間
+  smoothToward(S.p1, s.a); smoothToward(S.p2, s.b);
+  const prevOver = S.over;
+  S.timer = s.tm; S.over = s.ov; countdown = s.cd; shake = s.sk || 0;
+  if(s.rw){ roundWins = s.rw; roundNo = s.rn || 1; seriesOver = !!s.so; }
+  const wasSudden = sudden; sudden = !!s.sd;
+  if(sudden && !wasSudden) sfxBell();   // サドンデス突入音
+  S.waves = (s.wv || []).map(w=>({ x:w[0], y:w[1], vx:w[2], owner:w[3], big:!!w[4], t:0 }));
+  S.shocks = (s.sh || []).map(a=>({ x:a[0], r:a[1], owner:a[2], t:0, hit:true }));
+  if(s.fx) for(const f of s.fx) S.fx.push({ x:f[0], y:f[1], t:0, big:!!f[2], dodge:!!f[3] });
+  if(S.over && !prevOver){
+    phase = 'result'; sfxBell();
+    if(S.p1.hp <= 0 || S.p2.hp <= 0){ koT = 1.0; sfxKO(); }
+  }
+}
+function smoothToward(pl, arr){
+  // 位置は補間、状態系は即時反映
+  const tx=arr[0], ty=arr[1];
+  if(pl._init){ pl.x = lerp(pl.x, tx, 0.4); pl.y = lerp(pl.y, ty, 0.5); }
+  else { pl.x = tx; pl.y = ty; pl._init = true; }
+  pl.vx=arr[2]; const newHp=arr[3];
+  if(newHp < pl.hp) pl.hitFlash = 0.3;
+  pl.hp=newHp; pl.facing=arr[4]; pl.biteT=arr[5]; pl.jaw=arr[6]; pl.inv=arr[7];
+  if(arr[8] > pl.hitFlash) pl.hitFlash = arr[8];
+  pl.tread=arr[9];
+  pl.missCharge=arr[10]||0; pl.spinT=arr[11]||0; pl.spin=arr[12]||0; pl.superGauge=arr[13]||0;
+  pl.pinchUsed=!!arr[14]; pl.holdT=arr[15]||0; pl.smashT=arr[16]||0;
+}
+
+// ---------- メインループ ----------
+function perfNow(){ return performance.now(); }
+let last = perfNow(), sendAcc = 0, inpAcc = 0, prevInpStr = '';
+function loop(now){
+  const raw = Math.min(0.033, (now - last)/1000); last = now;
+  if(phase === 'play' || phase === 'result'){
+    if(countdown > 0) countdown = Math.max(0, countdown - raw);
+    if(net.isHost){
+      stepSim(raw);
+      // ラウンド終了→シリーズ継続なら一定時間後に次ラウンド自動開始
+      if(phase === 'result' && !seriesOver){
+        roundEndT -= raw;
+        if(roundEndT <= 0){ roundNo++; startMatch(); }
+      }
+      sendAcc += raw;
+      if(sendAcc >= 1/20){ sendAcc = 0; broadcastState(); }
+    }else{
+      // ゲスト：入力送信＋受信状態の反映
+      decodeNet();
+      const ip = localInput();
+      const s = (ip.left?1:0)+(ip.right?2:0)+(ip.jump?4:0)+(ip.hold?8:0)+(ip.missile?16:0);
+      inpAcc += raw;
+      if(s !== +prevInpStr || inpAcc > 0.08){
+        prevInpStr = '' + s; inpAcc = 0;
+        send({ t:'i', l:ip.left, r:ip.right, j:ip.jump, h:ip.hold, m:ip.missile });
+      }
+      // ゲスト側のローカル予測（自分=P2を軽く先行表示）※ホストが正）
+    }
+    // FXの寿命
+    if(S) for(let i=S.fx.length-1;i>=0;i--){ S.fx[i].t += raw; if(S.fx[i].t>0.5) S.fx.splice(i,1); }
+    if(koT > 0) koT = Math.max(0, koT - raw);
+    // 緊張演出の音：自分が瀕死なら心音、残り時間カウントダウン
+    if(S && phase === 'play' && countdown <= 0 && !S.over){
+      const me = (net.isHost ? S.p1 : S.p2);
+      if(me && me.hp > 0 && me.hp <= PINCH_HP){
+        const rate = 0.42 + (me.hp/PINCH_HP)*0.4;     // HPが低いほど速い鼓動
+        hbT -= raw; if(hbT <= 0){ hbT = rate; sfxThump(); }
+      } else hbT = 0;
+      // ラスト＆サドンデスの秒読み
+      const sec = Math.ceil(S.timer);
+      if((S.timer <= FINAL_RUSH || sudden) && sec !== tickSec && sec >= 0){ tickSec = sec; if(sec <= 10) sfxTick(); }
+    }
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// ---------- 描画 ----------
+function draw(){
+  cx.clearRect(0,0,W,H);
+  // 空
+  const sky = cx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#7ec8ee'); sky.addColorStop(.7,'#cfeaf7'); sky.addColorStop(1,'#e8f4f8');
+  cx.fillStyle = sky; cx.fillRect(0,0,W,H);
+  // 遠景ビル
+  cx.fillStyle = '#b4c4d4';
+  for(let i=0;i<12;i++){ const bx=i*90-20, bh=80+((i*53)%100); cx.fillRect(bx,GROUND-bh-18,64,bh+18); }
+  // 地面
+  cx.fillStyle = '#a89880'; cx.fillRect(0,GROUND,W,H-GROUND);
+  cx.fillStyle = '#8f8068'; cx.fillRect(0,GROUND,W,6);
+  // 養生フェンス（アリーナ枠）
+  cx.fillStyle = '#4a7cc4';
+  cx.fillRect(0,GROUND-46,ARENA_L,46); cx.fillRect(ARENA_R,GROUND-46,W-ARENA_R,46);
+
+  if(phase === 'menu'){ drawMenuBg(); return; }
+  if(!S){ return; }
+
+  // 画面ゆれ（必殺などの衝撃）
+  const shx = shake > 0 ? (Math.random()*2-1)*shake : 0, shy = shake > 0 ? (Math.random()*2-1)*shake : 0;
+  cx.save();
+  cx.translate(shx, shy);
+  // KO決着のズームイン（敗者へ寄る）
+  if(koT > 0){
+    const z = 1 + (koT/1.0) * 0.5;                       // 1.5倍→1.0倍へ
+    const loser = S.p1.hp <= 0 ? S.p1 : S.p2;
+    const fx = clamp(loser.x, 200, W-200), fy = GROUND - 50;
+    cx.translate(fx, fy); cx.scale(z, z); cx.translate(-fx, -fy);
+  }
+
+  // 叩きつけ衝撃波（地を這う）
+  for(const sh of S.shocks){
+    const a = clamp(1 - sh.r/300, 0, 1);
+    cx.strokeStyle = 'rgba(255,160,40,'+(0.5*a)+')'; cx.lineWidth = 16;
+    cx.beginPath(); cx.arc(sh.x, GROUND, sh.r*0.92, Math.PI, 0); cx.stroke();
+    cx.strokeStyle = 'rgba(255,235,120,'+(0.9*a)+')'; cx.lineWidth = 7;
+    cx.beginPath(); cx.arc(sh.x, GROUND, sh.r, Math.PI, 0); cx.stroke();
+    // 砂埃
+    cx.fillStyle='rgba(200,180,150,'+(0.4*a)+')';
+    cx.beginPath(); cx.arc(sh.x+sh.r, GROUND-6, 8*a+4, 0, 7); cx.fill();
+    cx.beginPath(); cx.arc(sh.x-sh.r, GROUND-6, 8*a+4, 0, 7); cx.fill();
+  }
+  // ミサイルの弾
+  for(const w of S.waves) drawWave(w);
+  // プレイヤー（奥→手前）
+  drawMachine(S.p1, 1);
+  drawMachine(S.p2, 2);
+  // ヒットエフェクト
+  for(const f of S.fx){
+    const a = clamp(1 - f.t/0.5, 0, 1);
+    cx.save(); cx.globalAlpha = a;
+    cx.strokeStyle = f.dodge ? '#9effff' : '#fff'; cx.lineWidth = 3;
+    const r = (f.big?20:12) + f.t*120;
+    cx.beginPath(); cx.arc(f.x, f.y, r, 0, 7); cx.stroke();
+    cx.font = 'bold ' + (f.big?26:18) + 'px ' + FONT;
+    cx.textAlign='center';
+    if(f.t < 0.4){
+      cx.fillStyle = f.dodge ? '#9effff' : '#ffe14d';
+      cx.fillText(f.dodge ? '回避！' : (f.big?'ガツン！':'ゴツ！'), f.x, f.y - 16 - f.t*30);
+    }
+    cx.restore();
+  }
+  cx.restore(); // shake / zoom
+
+  // ===== 緊張演出オーバーレイ =====
+  const meP = net.isHost ? S.p1 : S.p2, foeP = net.isHost ? S.p2 : S.p1;
+  // 瀕死ビネット（自分が瀕死＝赤強め、相手が瀕死＝薄く）
+  if(!S.over){
+    const pulse = 0.5 + 0.5*Math.sin(performance.now()/180);
+    if(meP.hp > 0 && meP.hp <= PINCH_HP){
+      const k = (1 - meP.hp/PINCH_HP);
+      const g = cx.createRadialGradient(W/2,H/2,H*0.35,W/2,H/2,H*0.75);
+      g.addColorStop(0,'rgba(255,0,0,0)'); g.addColorStop(1,'rgba(220,0,0,'+(0.18+0.28*k*pulse)+')');
+      cx.fillStyle=g; cx.fillRect(0,0,W,H);
+    }
+    if(foeP.hp > 0 && foeP.hp <= PINCH_HP){
+      cx.fillStyle='rgba(255,200,60,'+(0.06+0.05*pulse)+')'; cx.fillRect(0,0,W,H);
+    }
+    // ラストラッシュ（残りわずか）
+    if(S.timer <= FINAL_RUSH && countdown <= 0){
+      const r = 28 + 12*pulse;
+      cx.fillStyle='rgba(255,40,40,.5)'; cx.fillRect(0,0,W,r*0.5); cx.fillRect(0,H-r*0.5,W,r*0.5);
+      cx.textAlign='center'; cx.fillStyle = pulse>0.5?'#ff3030':'#fff';
+      cx.font='bold 22px '+FONT;
+      cx.fillText(sudden ? '⚡ サドンデス！ 次の一撃で決着！⚡' : '🔥 ラストラッシュ！ ダメージUP！🔥', W/2, H-58);
+    }
+  }
+
+  drawHUD();
+  if(touchMode && !S.over) drawTouch();
+
+  // KOフラッシュ＆文字
+  if(koT > 0){
+    if(koT > 0.82){ cx.fillStyle='rgba(255,255,255,'+((koT-0.82)/0.18*0.9)+')'; cx.fillRect(0,0,W,H); }
+    cx.textAlign='center';
+    const sc = 1 + (1-koT)*0.3;
+    cx.save(); cx.translate(W/2,H*0.34); cx.scale(sc,sc);
+    cx.fillStyle='#ff2e2e'; cx.strokeStyle='#fff'; cx.lineWidth=8; cx.font='bold 92px '+FONT;
+    cx.strokeText('K.O.!',0,0); cx.fillText('K.O.!',0,0);
+    cx.restore();
+  }
+
+  if(countdown > 0 && !S.over){
+    const n = Math.ceil(countdown - 0.2);
+    cx.fillStyle = 'rgba(0,0,0,.25)'; cx.fillRect(0,0,W,H);
+    cx.textAlign='center'; cx.fillStyle = '#fff'; cx.strokeStyle = PINK_D; cx.lineWidth=8;
+    cx.font = 'bold 130px ' + FONT;
+    const txt = n > 0 ? n : 'START!';
+    if(n <= 0){ cx.font = 'bold 90px ' + FONT; }
+    cx.strokeText(txt, W/2, H/2+30); cx.fillText(txt, W/2, H/2+30);
+  }
+  if(S.over && koT <= 0.5) drawResult();   // KO演出が落ち着いてから結果表示
+}
+
+function youSide(){ return net.isHost ? 1 : 2; }
+
+function drawHUD(){
+  // P1（左） / P2（右）
+  drawHpBar(20, 22, 380, S.p1.hp, false, 'P1' + (youSide()===1?'（あなた）':''), '#ff5db0');
+  drawHpBar(W-20-380, 22, 380, S.p2.hp, true, 'P2' + (youSide()===2?'（あなた）':''), '#5db0ff');
+  // ミサイル チャージゲージ
+  drawGauge(20, 52, 240, S.p1.missCharge, false);
+  drawGauge(W-20-240, 52, 240, S.p2.missCharge, true);
+  // 特大ミサイル ゲージ（回避＆旋回ダメージで蓄積）
+  drawSuper(20, 70, 240, S.p1.superGauge, false);
+  drawSuper(W-20-240, 70, 240, S.p2.superGauge, true);
+  // ヒント（自分の状態に応じて）
+  const me = youSide()===1 ? S.p1 : S.p2;
+  cx.textAlign='center';
+  if(me.spinT > 0){
+    cx.fillStyle='#ffe14d'; cx.font='bold 16px '+FONT;
+    cx.fillText('🌀 旋回中！ 相手にぶつかれ！（あと'+Math.ceil(me.spinT)+'秒）', W/2, 100);
+  }else if(me.superGauge >= 100){
+    cx.fillStyle='#ffd24d'; cx.font='bold 16px '+FONT;
+    cx.fillText('💥 特大ミサイルOK！ 🚀ボタンを押すだけ！', W/2, 100);
+  }else if(me.hp <= 25 && me.hp > 0 && !me.pinchUsed){
+    cx.fillStyle='#ff7070'; cx.font='bold 16px '+FONT;
+    cx.fillText('🔥 瀕死！ 起死回生の特大ミサイルを一発撃てる！🚀押すだけ', W/2, 100);
+  }else if(me.holdT >= 0.42){
+    cx.fillStyle='#ffd24d'; cx.font='bold 15px '+FONT;
+    cx.fillText('🔨 叩きつけ準備OK！ 指を離して衝撃波！', W/2, 100);
+  }else if(me.holdT > 0.08){
+    cx.fillStyle='#ffce6a'; cx.font='bold 14px '+FONT;
+    cx.fillText('🔨 叩きつけ 溜め中…（離すと衝撃波）', W/2, 100);
+  }else if(me.missCharge >= 0.5){
+    cx.fillStyle='#9effff'; cx.font='bold 15px '+FONT;
+    cx.fillText('🚀 チャージ完了！ 指を離して発射！', W/2, 100);
+  }else if(me.missCharge > 0){
+    cx.fillStyle='#9effff'; cx.font='bold 14px '+FONT;
+    cx.fillText('🚀 ミサイル チャージ中…（押し続けて）', W/2, 100);
+  }
+  // タイマー＋三本勝負スコア
+  cx.textAlign='center'; cx.font = 'bold 34px ' + FONT;
+  cx.fillStyle = S.timer < 11 ? '#ff5252' : '#fff';
+  cx.strokeStyle = 'rgba(0,0,0,.5)'; cx.lineWidth = 5;
+  const tt = Math.ceil(S.timer);
+  cx.strokeText(tt, W/2, 44); cx.fillText(tt, W/2, 44);
+  // 勝ち星（先取2勝）
+  cx.font='bold 13px '+FONT;
+  const dot=(won,x)=>{ cx.fillStyle = won ? '#ffe14d' : 'rgba(255,255,255,.3)'; cx.beginPath(); cx.arc(x,62,5,0,7); cx.fill(); };
+  cx.fillStyle='#fff'; cx.textAlign='right'; cx.fillText('P1', W/2-40, 66);
+  dot(roundWins[0]>=1, W/2-26); dot(roundWins[0]>=2, W/2-14);
+  cx.fillStyle='#fff'; cx.textAlign='center'; cx.fillText('三本勝負 R'+roundNo, W/2, 66);
+  dot(roundWins[1]>=1, W/2+14); dot(roundWins[1]>=2, W/2+26);
+  cx.fillStyle='#fff'; cx.textAlign='left'; cx.fillText('P2', W/2+40, 66);
+}
+function drawHpBar(x, y, w, hp, right, label, col){
+  cx.fillStyle = 'rgba(0,0,0,.4)'; roundRect(x,y,w,26,8); cx.fill();
+  const r = clamp(hp/100,0,1);
+  cx.fillStyle = col;
+  if(right){ roundRect(x + w - w*r + 0, y+3, w*r-3, 20, 6); }
+  else { roundRect(x+3, y+3, w*r-3, 20, 6); }
+  cx.fill();
+  cx.fillStyle = '#fff'; cx.font = 'bold 14px ' + FONT;
+  cx.textAlign = right ? 'right' : 'left';
+  cx.fillText(label + '  ' + Math.ceil(hp), right ? x+w-8 : x+8, y+18);
+}
+
+function drawGauge(x, y, w, charge, right){
+  // charge は 0..1（ミサイル長押しチャージ）。0.5以上で発射可能
+  const ready = charge >= 0.5;
+  cx.fillStyle='rgba(0,0,0,.4)'; roundRect(x,y,w,12,6); cx.fill();
+  const r = clamp(charge,0,1);
+  const g = cx.createLinearGradient(x,0,x+w,0); g.addColorStop(0,'#4a90d8'); g.addColorStop(1,'#9effff');
+  cx.fillStyle = ready ? '#9effff' : g;
+  if(right) roundRect(x+w-w*r, y+2, Math.max(0,w*r-2), 8, 4);
+  else roundRect(x+2, y+2, Math.max(0,w*r-2), 8, 4);
+  cx.fill();
+  // 発射可能ライン（50%）
+  const lx = right ? x + w - w*0.5 : x + w*0.5;
+  cx.strokeStyle='#ffe14d'; cx.lineWidth=2;
+  cx.beginPath(); cx.moveTo(lx, y); cx.lineTo(lx, y+12); cx.stroke();
+  cx.fillStyle = ready ? '#9effff' : 'rgba(255,255,255,.8)';
+  cx.font='bold 10px '+FONT; cx.textAlign = right?'right':'left';
+  cx.fillText(charge<=0 ? '🚀長押しで溜め' : ready ? '🚀離して発射!' : 'チャージ中…', right?x+w:x, y+22);
+}
+// 特大ミサイル ゲージ（0..100）
+function drawSuper(x, y, w, g, right){
+  const full = g >= 100;
+  cx.fillStyle='rgba(0,0,0,.4)'; roundRect(x,y,w,9,5); cx.fill();
+  const r = clamp(g/100,0,1);
+  const grd = cx.createLinearGradient(x,0,x+w,0); grd.addColorStop(0,'#c2841a'); grd.addColorStop(1,'#ffe14d');
+  cx.fillStyle = full ? '#ffe14d' : grd;
+  if(right) roundRect(x+w-w*r, y+1.5, Math.max(0,w*r-2), 6, 3);
+  else roundRect(x+2, y+1.5, Math.max(0,w*r-2), 6, 3);
+  cx.fill();
+  if(full){
+    cx.fillStyle = Math.floor(performance.now()/250)%2 ? '#fff' : '#ffd24d';
+    cx.font='bold 9px '+FONT; cx.textAlign = right?'right':'left';
+    cx.fillText('💥特大ミサイルOK!', right?x+w:x, y+8);
+  }
+}
+function drawMachine(pl, idx){
+  const T = performance.now()/1000;
+  const flash = pl.hitFlash > 0 && Math.floor(pl.hitFlash*16)%2===0;
+  // 機体カラー：P1=ピンク／P2=青
+  if(idx === 2){ MC = BLUE; MCD = BLUE_D; MCL = BLUE_L; }
+  else { MC = PINK; MCD = PINK_D; MCL = PINK_L; }
+  cx.save();
+  cx.translate(pl.x, pl.y);
+  // 影
+  cx.fillStyle = 'rgba(0,0,0,.18)';
+  cx.beginPath(); cx.ellipse(0, GROUND-pl.y+6, 52, 8, 0, 0, 7); cx.fill();
+  // ミサイル チャージのオーラ（長押し中に成長／50%でレディ）
+  if(pl.missCharge > 0.04 && pl.spinT <= 0){
+    const lv = clamp(pl.missCharge, 0, 1), ready = pl.missCharge >= 0.5;
+    const rr = 40 + lv*30 + Math.sin(T*16)*4;
+    const grd = cx.createRadialGradient(0,-46,8,0,-46,rr);
+    grd.addColorStop(0, ready ? 'rgba(150,255,255,.55)' : 'rgba(120,200,255,'+(0.18+0.3*lv)+')');
+    grd.addColorStop(1,'rgba(120,200,255,0)');
+    cx.fillStyle = grd; cx.beginPath(); cx.arc(0,-46,rr,0,7); cx.fill();
+    if(ready){ for(let i=0;i<6;i++){ const a=T*6+i*1.05; cx.fillStyle='rgba(190,245,255,.9)';
+      cx.beginPath(); cx.arc(Math.cos(a)*rr*0.7,-46+Math.sin(a)*rr*0.5,3,0,7); cx.fill(); } }
+  }
+  // 旋回オーラ（スピン中）
+  if(pl.spinT > 0){
+    const rr = 70 + Math.sin(T*22)*6;
+    const grd = cx.createRadialGradient(0,-40,10,0,-40,rr);
+    grd.addColorStop(0,'rgba(255,225,77,.35)'); grd.addColorStop(1,'rgba(255,46,146,0)');
+    cx.fillStyle = grd; cx.beginPath(); cx.arc(0,-40,rr,0,7); cx.fill();
+    cx.strokeStyle='rgba(255,255,255,.5)'; cx.lineWidth=3;
+    cx.beginPath(); cx.arc(0,-40,rr*0.8, T*20%6.28, T*20%6.28+2.2); cx.stroke();
+    if(Math.floor(pl.spinT*1000)%500<60) {}
+  }
+  // 叩きつけ 溜めオーラ（オレンジ）
+  if(pl.holdT > 0.06 && pl.smashT <= 0){
+    const ready = pl.holdT >= 0.42, lv = Math.min(1, pl.holdT/0.42);
+    const rr = 34 + lv*30 + Math.sin(T*18)*3;
+    const grd = cx.createRadialGradient(0,-52,8,0,-52,rr);
+    grd.addColorStop(0, ready ? 'rgba(255,200,60,.6)' : 'rgba(255,160,40,'+(0.18+0.3*lv)+')');
+    grd.addColorStop(1,'rgba(255,160,40,0)');
+    cx.fillStyle=grd; cx.beginPath(); cx.arc(0,-52,rr,0,7); cx.fill();
+  }
+  cx.save();
+  if(flash) cx.globalAlpha = 0.5;
+  cx.scale(pl.facing, 1);
+  cx.rotate(pl.pitch * pl.facing);
+  // クローラー（土台は回らない）
+  cx.fillStyle = '#3c3c44'; roundRect(-50,-26,100,26,12); cx.fill();
+  cx.fillStyle = '#55555e';
+  for(let i=0;i<4;i++){ cx.beginPath(); cx.arc(-34+i*23,-13,6,0,7); cx.fill(); }
+  cx.fillStyle = '#1e1e26';
+  const to = ((pl.tread%15)+15)%15;
+  for(let i=-4;i<4;i++){ const tx=i*15+to; if(tx>-46&&tx<42){ cx.fillRect(tx,-4,6,4); cx.fillRect(tx,-26,6,3);} }
+  // ▼ 旋回体（ここから上は横方向に回転＝ヨー。スピン中は cos で水平に回る） ▼
+  cx.save();
+  if(pl.spinT > 0){
+    const yaw = Math.cos(pl.spin);                 // -1〜1 で水平回転を表現
+    const px = -6;                                 // 旋回中心（おおよそ車体中心）
+    cx.translate(px,0); cx.scale(yaw < 0 ? Math.min(yaw,-0.06) : Math.max(yaw,0.06), 1); cx.translate(-px,0);
+    // 旋回ベース円板
+    cx.fillStyle = '#33333c'; cx.beginPath(); cx.ellipse(px,-26,30,7,0,0,7); cx.fill();
+  }
+  // 旋回体（水玉）
+  const bw=92,bh=36,bx=-58,by=-62;
+  cx.save();
+  roundRect(bx,by,bw,bh,8); cx.fillStyle = MC; cx.fill(); cx.clip();
+  dots(bx,by,bw,bh,6); heart(bx+14,by+bh-12,8,MCD);
+  cx.restore();
+  cx.strokeStyle = MCD; cx.lineWidth=2; roundRect(bx,by,bw,bh,8); cx.stroke();
+  // キャブ
+  const cbx=6,cby=-100,cw=34,ch=42;
+  roundRect(cbx,cby,cw,ch,6); cx.fillStyle='#2e2e38'; cx.fill();
+  cx.strokeStyle='#1c1c24'; cx.lineWidth=2; cx.stroke();
+  cx.fillStyle='#9fd3e8'; roundRect(cbx+4,cby+4,cw-8,ch*0.5,4); cx.fill();
+  // プレイヤー番号フラッグ
+  const fcol = idx===1 ? '#ff3b3b' : '#3b8bff';
+  cx.fillStyle = fcol; cx.fillRect(bx+bw-10,by-22,4,22);
+  cx.beginPath(); cx.moveTo(bx+bw-6,by-22); cx.lineTo(bx+bw+14,by-17); cx.lineTo(bx+bw-6,by-12); cx.fill();
+  cx.fillStyle='#fff'; cx.font='bold 9px '+FONT; cx.textAlign='center';
+  cx.fillText('P'+idx, bx+bw+2, by-15);
+  // アーム＋圧砕機（前方へ）／叩きつけ時は振り上げ→振り下ろし
+  const sx=20, sy=-58, l1=46, l2=40;
+  let a1=-0.32, a2=0.30;
+  if(pl.smashT > 0){
+    const p = Math.min(1, (1 - pl.smashT/0.34) * 1.6);   // 0→1 で振り下ろし
+    a1 = lerp(-1.15, 0.25, p); a2 = lerp(-0.3, 1.3, p);
+  }else if(pl.holdT > 0.1){
+    const c = Math.min(1, pl.holdT/0.42);                // 溜めで振りかぶる
+    a1 = -0.32 - c*0.8; a2 = 0.30 - c*0.55;
+  }
+  const e1x=sx+Math.cos(a1)*l1, e1y=sy+Math.sin(a1)*l1;
+  const tx=e1x+Math.cos(a2)*l2, ty=e1y+Math.sin(a2)*l2;
+  limb(sx,sy,e1x,e1y,12); limb(e1x,e1y,tx,ty,9);
+  cx.fillStyle=MCD; cx.beginPath(); cx.arc(sx,sy,7,0,7); cx.fill();
+  cx.beginPath(); cx.arc(e1x,e1y,5,0,7); cx.fill();
+  drawCrusher(tx,ty,a2,pl.jaw);
+  cx.restore();   // ヨー（旋回体）終わり
+  cx.restore();   // スケール／flash 終わり
+  // 「あなた」表示
+  if((idx===youSide())){
+    cx.fillStyle = '#ffe14d'; cx.font='bold 13px '+FONT; cx.textAlign='center';
+    const yy = -118 + Math.sin(T*4+idx)*3;
+    cx.strokeStyle='rgba(0,0,0,.5)'; cx.lineWidth=3;
+    cx.strokeText('▼あなた', 0, yy); cx.fillText('▼あなた', 0, yy);
+  }
+  cx.restore();
+}
+function limb(x1,y1,x2,y2,w){
+  cx.strokeStyle=MCD; cx.lineWidth=w+4; cx.lineCap='round';
+  cx.beginPath(); cx.moveTo(x1,y1); cx.lineTo(x2,y2); cx.stroke();
+  cx.strokeStyle=MC; cx.lineWidth=w;
+  cx.beginPath(); cx.moveTo(x1,y1); cx.lineTo(x2,y2); cx.stroke();
+  // ドット
+  cx.fillStyle='#fff';
+  const n=Math.floor(Math.hypot(x2-x1,y2-y1)/14);
+  for(let i=1;i<n;i++){ const t=i/n; cx.beginPath(); cx.arc(x1+(x2-x1)*t,y1+(y2-y1)*t,2.6,0,7); cx.fill(); }
+}
+function drawCrusher(x,y,a,jaw){
+  cx.save(); cx.translate(x,y); cx.rotate(a);
+  cx.fillStyle='#4a4a54'; roundRect(-9,-12,24,24,6); cx.fill();
+  cx.strokeStyle='#2c2c34'; cx.lineWidth=2; roundRect(-9,-12,24,24,6); cx.stroke();
+  cx.save(); cx.translate(7,0); cx.rotate(-jaw); jaw1(1); cx.restore();
+  cx.save(); cx.translate(7,0); cx.rotate(jaw*0.85); jaw1(-1); cx.restore();
+  cx.fillStyle='#3a3a42'; cx.beginPath(); cx.arc(7,0,5,0,7); cx.fill();
+  cx.fillStyle=MC; cx.beginPath(); cx.arc(2,0,6,0,7); cx.fill();
+  cx.fillStyle='#fff'; cx.beginPath(); cx.arc(2,0,2.6,0,7); cx.fill();
+  cx.restore();
+}
+function jaw1(side){
+  cx.fillStyle='#5a5a64'; cx.beginPath();
+  cx.moveTo(-2,-4*side); cx.quadraticCurveTo(22,-18*side,44,-8*side);
+  cx.quadraticCurveTo(47,-4*side,44,-1*side);
+  cx.lineTo(36,-8*side); cx.lineTo(31,-2*side); cx.lineTo(23,-8*side);
+  cx.lineTo(18,-2*side); cx.lineTo(8,-6*side); cx.closePath(); cx.fill();
+  cx.strokeStyle='#33333a'; cx.lineWidth=2; cx.stroke();
+}
+function dots(x,y,w,h,r){
+  cx.fillStyle='#fff'; const gap=r*3.1; let k=0,idx=0;
+  for(let yy=y+r*1.2;yy<y+h-r*0.3;yy+=gap){ const off=(k%2)*gap/2;
+    for(let xx=x+r*1.2+off;xx<x+w-r*0.3;xx+=gap){ if(idx%4===3) heart(xx,yy,r*1.05,'#fff');
+      else { cx.beginPath(); cx.arc(xx,yy,r,0,7); cx.fill(); } idx++; } k++; }
+}
+function heart(x,y,s,col){ cx.fillStyle=col; cx.beginPath();
+  cx.moveTo(x,y+s*0.6); cx.bezierCurveTo(x-s,y-s*0.4,x-s*0.5,y-s,x,y-s*0.3);
+  cx.bezierCurveTo(x+s*0.5,y-s,x+s,y-s*0.4,x,y+s*0.6); cx.fill(); }
+function roundRect(x,y,w,h,r){ cx.beginPath(); cx.moveTo(x+r,y);
+  cx.arcTo(x+w,y,x+w,y+h,r); cx.arcTo(x+w,y+h,x,y+h,r); cx.arcTo(x,y+h,x,y,r); cx.arcTo(x,y,x+w,y,r); cx.closePath(); }
+
+// ミサイル弾
+function drawWave(w){
+  const d = Math.sign(w.vx) || 1;
+  const c = w.owner === 2 ? BLUE : PINK, cd = w.owner === 2 ? BLUE_D : PINK_D;   // 撃った側の色
+  cx.save(); cx.translate(w.x, w.y); cx.scale(d, 1);
+  if(w.big){
+    cx.scale(2.0, 2.0);   // 特大ミサイル
+    cx.fillStyle='rgba(255,225,77,.3)'; cx.beginPath(); cx.arc(0,0,24,0,7); cx.fill();
+  }
+  // 噴射炎＆煙
+  const fl = 14 + Math.sin(performance.now()/30)*5;
+  const grd = cx.createLinearGradient(-12-fl,0,-12,0);
+  grd.addColorStop(0,'rgba(255,180,40,0)'); grd.addColorStop(1,'rgba(255,210,60,.9)');
+  cx.fillStyle = grd;
+  cx.beginPath(); cx.moveTo(-12,-5); cx.lineTo(-12-fl,0); cx.lineTo(-12,5); cx.closePath(); cx.fill();
+  // 本体（水玉ミサイル）
+  cx.fillStyle = c;
+  cx.beginPath();
+  cx.moveTo(18,0); cx.quadraticCurveTo(12,-7,-10,-7); cx.lineTo(-12,-5);
+  cx.lineTo(-12,5); cx.lineTo(-10,7); cx.quadraticCurveTo(12,7,18,0); cx.fill();
+  cx.strokeStyle = cd; cx.lineWidth=1.5; cx.stroke();
+  // 尾翼
+  cx.fillStyle = cd;
+  cx.beginPath(); cx.moveTo(-10,-6); cx.lineTo(-15,-11); cx.lineTo(-9,-4); cx.fill();
+  cx.beginPath(); cx.moveTo(-10,6); cx.lineTo(-15,11); cx.lineTo(-9,4); cx.fill();
+  // 水玉
+  cx.fillStyle='#fff';
+  cx.beginPath(); cx.arc(-2,-2,2,0,7); cx.fill();
+  cx.beginPath(); cx.arc(6,1,2,0,7); cx.fill();
+  cx.restore();
+}
+function drawTouch(){
+  cx.textBaseline='middle';
+  const me = myPlayer();
+  const missileReady = me && me.missCharge > 0;
+  for(const k in TB){
+    const b=TB[k];
+    const glow = (k==='missile' && missileReady);
+    cx.globalAlpha=0.45; cx.fillStyle = glow?'#0a3a4a':'#10101c'; cx.beginPath(); cx.arc(b.x,b.y,b.r,0,7); cx.fill();
+    cx.strokeStyle = glow && Math.floor(performance.now()/250)%2===0 ? '#9effff' : '#fff';
+    cx.lineWidth=3; cx.beginPath(); cx.arc(b.x,b.y,b.r,0,7); cx.stroke();
+    cx.fillStyle='#fff'; cx.font='bold '+Math.round(b.r*0.7)+'px '+FONT; cx.textAlign='center';
+    cx.fillText(b.label,b.x,b.y+2); cx.globalAlpha=1;
+  }
+  // 操作ヒント
+  cx.globalAlpha=0.5; cx.fillStyle='#fff'; cx.font='bold 12px '+FONT; cx.textAlign='center';
+  cx.fillText('タップ=噛む／長押し→離す=叩きつけ🔨／🚀長押し=ミサイル／◀▶交互4回=旋回🌀', W/2, H-20); cx.globalAlpha=1;
+  cx.textBaseline='alphabetic';
+}
+
+function drawResult(){
+  cx.fillStyle='rgba(20,12,28,.62)'; cx.fillRect(0,0,W,H);
+  cx.textAlign='center';
+  const winner = S.over;   // 1=P1, 2=P2, 3=引き分け
+  if(seriesOver){
+    // ===== シリーズ決着 =====
+    const seriesWinner = roundWins[0] >= 2 ? 1 : 2;
+    const youWin = seriesWinner === youSide();
+    for(let i=0;i<18;i++){ const a=performance.now()/600+i; heart(W/2+Math.cos(a)*(160+(i%4)*60),H/2-30+Math.sin(a*1.3)*(95+(i%3)*45),7,i%2?PINK_L:BLUE_L); }
+    cx.fillStyle = youWin ? '#ffe14d' : '#ff8fc6'; cx.font='bold 46px '+FONT;
+    cx.strokeStyle='rgba(0,0,0,.5)'; cx.lineWidth=7;
+    const t1 = youWin ? '🏆 シリーズ制覇！' : '😵 シリーズ敗退…';
+    cx.strokeText(t1,W/2,H/2-46); cx.fillText(t1,W/2,H/2-46);
+    cx.fillStyle='#fff'; cx.font='bold 26px '+FONT;
+    cx.fillText('P'+seriesWinner+' の勝利！　（'+roundWins[0]+' - '+roundWins[1]+'）', W/2, H/2-2);
+  }else{
+    // ===== ラウンド決着（次へ続く） =====
+    let main, col;
+    if(winner === 3){ main='このラウンド 引き分け'; col='#ffe14d'; }
+    else { main = 'ROUND '+roundNo+'：P'+winner+' の勝ち！'; col = winner===1 ? PINK_L : BLUE_L; }
+    cx.fillStyle=col; cx.font='bold 38px '+FONT;
+    cx.strokeStyle='rgba(0,0,0,.5)'; cx.lineWidth=6;
+    cx.strokeText(main,W/2,H/2-30); cx.fillText(main,W/2,H/2-30);
+    cx.fillStyle='#fff'; cx.font='bold 24px '+FONT;
+    cx.fillText('★ '+roundWins[0]+' - '+roundWins[1]+' ★', W/2, H/2+8);
+    cx.font='bold 18px '+FONT; cx.fillStyle='#ffe14d';
+    if(Math.floor(performance.now()/400)%2===0) cx.fillText('次のラウンドへ…', W/2, H/2+44);
+    return;   // ラウンド間はボタン無し（自動で次へ）
+  }
+  // ボタン（シリーズ決着時のみ）：もう一戦（新シリーズ）／メニュー
+  const drawBtn = (b, label, col, on) => {
+    cx.globalAlpha = on ? 1 : 0.4;
+    cx.fillStyle = col; roundRect(b.x,b.y,b.w,b.h,12); cx.fill();
+    cx.fillStyle = '#fff'; cx.font='bold 20px '+FONT; cx.textAlign='center'; cx.textBaseline='middle';
+    cx.fillText(label, b.x+b.w/2, b.y+b.h/2+1);
+    cx.textBaseline='alphabetic'; cx.globalAlpha = 1;
+  };
+  if(net.isHost) drawBtn(RBTN_AGAIN, '🔁 もう一本勝負', '#ff2e92', true);
+  else { cx.fillStyle='#fff'; cx.font='17px '+FONT; cx.fillText('ホストの再戦を待っています…', RBTN_AGAIN.x+RBTN_AGAIN.w/2, RBTN_AGAIN.y+30); }
+  drawBtn(RBTN_MENU, '🏠 メニュー', '#3a6ab8', true);
+}
+
+function drawMenuBg(){
+  // ロビー背景に重機をちらり
+  const demo = { x:W/2, y:GROUND, vx:0, facing:1, tread:performance.now()*0.05, pitch:0, jaw:0.2+Math.sin(performance.now()/400)*0.1, t:performance.now()/1000, inv:0, hitFlash:0 };
+  drawMachine(demo, 1);
+}
+
+// ---------- ロビーUI配線 ----------
+const lobby = document.getElementById('lobby');
+const menu = document.getElementById('menu');
+const hostBox = document.getElementById('hostBox');
+const joinBox = document.getElementById('joinBox');
+const cpuBox = document.getElementById('cpuBox');
+const codeShow = document.getElementById('codeShow');
+const hostMsg = document.getElementById('hostMsg');
+const joinMsg = document.getElementById('joinMsg');
+const joincode = document.getElementById('joincode');
+function showBox(which){
+  menu.style.display = which==='menu' ? 'flex':'none';
+  hostBox.style.display = which==='hostBox' ? 'block':'none';
+  joinBox.style.display = which==='joinBox' ? 'block':'none';
+  cpuBox.style.display = which==='cpuBox' ? 'block':'none';
+}
+// CPU対戦（ネット不要・ひとりで遊べる）
+function startCPU(level){
+  cpuLevel = level; vsCPU = true; net.isHost = true; net.connected = false;
+  net.conn = null;
+  try{ ac().resume && ac().resume(); }catch(_){}
+  lobby.classList.add('hidden');
+  startSeries();
+}
+document.getElementById('bCPU').onclick = () => showBox('cpuBox');
+document.getElementById('bCpu0').onclick = () => startCPU(0);
+document.getElementById('bCpu1').onclick = () => startCPU(1);
+document.getElementById('bCpu2').onclick = () => startCPU(2);
+document.getElementById('bCpuCancel').onclick = () => showBox('menu');
+document.getElementById('bHost').onclick = () => { ensurePeerJS(()=>startHost()); };
+document.getElementById('bJoin').onclick = () => startJoin();
+document.getElementById('bConnect').onclick = () => ensurePeerJS(()=>doConnect());
+document.getElementById('bHostCancel').onclick = () => peerLost('');
+document.getElementById('bJoinCancel').onclick = () => { showBox('menu'); };
+joincode.addEventListener('input', () => { joincode.value = joincode.value.toUpperCase().replace(/[^A-Z0-9]/g,''); });
+function ensurePeerJS(cb){
+  if(typeof Peer === 'undefined'){
+    hostMsg.textContent = joinMsg.textContent = '通信ライブラリを読み込めません（ネット接続を確認）';
+    return;
+  }
+  cb();
+}
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
