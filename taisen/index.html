@@ -119,6 +119,17 @@ function sfxKO(){ try{ const a=ac(),t=a.currentTime;
   const g=a.createGain(); env(g,t,0.5,0.5); n.connect(f).connect(g).connect(a.destination); n.start(t);
   const o=a.createOscillator(),g2=a.createGain(); o.type='sawtooth'; o.frequency.setValueAtTime(400,t); o.frequency.exponentialRampToValueAtTime(60,t+0.4);
   env(g2,t,0.25,0.45); o.connect(g2).connect(a.destination); o.start(t); o.stop(t+0.46);}catch(e){} }
+function sfxDash(){ try{ const a=ac(),t=a.currentTime;   // 突進のヒュン！
+  const n=a.createBufferSource(), buf=a.createBuffer(1,a.sampleRate*0.22,a.sampleRate), d=buf.getChannelData(0);
+  for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*(i/d.length)*(1-i/d.length)*4; n.buffer=buf;
+  const f=a.createBiquadFilter(); f.type='bandpass'; f.frequency.setValueAtTime(600,t); f.frequency.exponentialRampToValueAtTime(2400,t+0.2); f.Q.value=1.2;
+  const g=a.createGain(); env(g,t,0.4,0.24); n.connect(f).connect(g).connect(a.destination); n.start(t);}catch(e){} }
+function sfxUltra(){ try{ const a=ac(),t=a.currentTime;  // 奥義発動：地鳴り＋上昇音
+  const o=a.createOscillator(),g=a.createGain(); o.type='sawtooth';
+  o.frequency.setValueAtTime(70,t); o.frequency.exponentialRampToValueAtTime(880,t+0.55);
+  env(g,t,0.3,0.6); o.connect(g).connect(a.destination); o.start(t); o.stop(t+0.62);
+  const o2=a.createOscillator(),g2=a.createGain(); o2.type='sine';
+  o2.frequency.setValueAtTime(55,t); env(g2,t,0.45,0.5); o2.connect(g2).connect(a.destination); o2.start(t); o2.stop(t+0.52);}catch(e){} }
 
 // ---------- 入力 ----------
 const keys = {};
@@ -291,6 +302,12 @@ function mkPlayer(x, face){
            spinT:0, spin:0, spinHitCd:0, lastDir:0, altCount:0, altT:0, _pLeft:false, _pRight:false,
            superGauge:0, stompCd:0, swingCd:0, _faceLast:face, pinchUsed:false,
            holdT:0, _pHold:false, smashT:0, smashCd:0, _smashFired:false,
+           // ▼ コマンド必殺技
+           dashT:0, dashDir:1, dashCd:0, dashHitDone:false, rushN:0, rushTick:0,   // ▶▶ 突進連撃
+           tapDir:0, tapT:-9,                                                     // 2連打検出
+           diving:false, landLag:0, _pJump:false,                                  // 空中▲ メテオプレス
+           cmdWin:0, ultraUsed:false, superPhase:0, superT:0, u0x:0, uDir:1, uHit:false, _pMissUltra:false, // ◀▶◀▶+🚀 奥義
+           combo:0, comboT:0,                                                      // コンボ表示
            ai:null };
 }
 // 三本勝負（先取2勝）の状態
@@ -298,10 +315,32 @@ let roundWins = [0, 0], roundNo = 1, seriesOver = false, roundEndT = 0;
 let sudden = false;           // サドンデス（延長・次の一撃で決着）
 let koT = 0;                  // KO演出タイマー（ローカル）
 let hbT = 0, tickSec = -1;    // 心音・カウントダウン音の管理
+let freezeT = 0;              // ヒットストップ（一撃の重み）
+let cutin = null;             // 技名カットイン {t,name,sub,col,big}
+const ghosts = [];            // 残像（ローカル演出）
+const konfetti = [];          // 勝利紙吹雪（ローカル演出）
+let konfettiDone = false;
+// 技カットイン定義
+const CUT_DEFS = {
+  1:{ name:'クラッシャーラッシュ！', sub:'⚡ 2連打ダッシュ成功！' },
+  2:{ name:'メテオプレス！',        sub:'☄ 空中急降下！' },
+  3:{ name:'奥義・鬼神大解体！！',   sub:'💥 コマンド成立' },
+  4:{ name:'外したーッ！？',        sub:'…奥義は不発に終わった' },
+};
+function applyCut(k, owner){
+  const d = CUT_DEFS[k]; if(!d) return;
+  cutin = { t:0, name:d.name, sub:d.sub, col: owner===2 ? BLUE : PINK, big: k===3 };
+  if(k===1) sfxDash(); else if(k===2) sfxThump(); else if(k===3) sfxUltra(); else sfxClank();
+}
+function cutEvent(k, owner){   // ホスト側：発動＋ゲストへ配信
+  if(S && S.cuts) S.cuts.push({ k, o:owner, sent:false });
+  applyCut(k, owner);
+}
 function startMatch(){   // 1ラウンド開始（roundWins は保持）
   S = { p1: mkPlayer(ARENA_L + 130, 1), p2: mkPlayer(ARENA_R - 130, -1),
-        t: 0, timer: MATCH_TIME, over: 0, scored: false, fx: [], waves: [], shocks: [] };
+        t: 0, timer: MATCH_TIME, over: 0, scored: false, fx: [], waves: [], shocks: [], cuts: [] };
   countdown = 3.2; sudden = false; koT = 0; tickSec = -1;
+  freezeT = 0; cutin = null; ghosts.length = 0; konfetti.length = 0; konfettiDone = false;
   phase = 'play';
 }
 // ラスト数秒はダメージ加速（決着を早める＝ヒリつき）
@@ -320,22 +359,49 @@ function hostRestart(){ startSeries(); send({ t:'rs' }); }
 function clamp(v,a,b){ return v<a?a:v>b?b:v; }
 function rnd(a,b){ return a + Math.random()*(b-a); }
 function lerp(a,b,t){ return a+(b-a)*t; }
-function stepPlayerKinematics(pl, inp, dt){
-  let mv = (inp.right?1:0) - (inp.left?1:0);
-  const target = mv * 250;
-  pl.vx = lerp(pl.vx, target, Math.min(1, dt*2.6));
-  if(Math.abs(pl.vx) < 4 && mv === 0) pl.vx = 0;
-  if(mv !== 0) pl.facing = mv > 0 ? 1 : -1;
-  if(inp.jump && pl.onGround){ pl.vy = -500; pl.onGround = false; }
-  pl.vy += 1250 * dt;
+const EMPTY_INP = { left:false, right:false, jump:false, hold:false, missile:false };
+function stepPlayerKinematics(pl, inp0, dt){
+  // 着地硬直（メテオプレスの隙）中は操作不能
+  const inp = pl.landLag > 0 ? EMPTY_INP : inp0;
+  const jumpEdge = inp.jump && !pl._pJump;
+  pl._pJump = inp.jump;
+  if(pl.dashT > 0){
+    // ⚡ 突進中：一直線に高速移動（操作は効かない）
+    pl.dashT -= dt;
+    pl.vx = pl.dashDir * 640;
+    pl.facing = pl.dashDir;
+  }else{
+    let mv = (inp.right?1:0) - (inp.left?1:0);
+    const target = mv * 250;
+    pl.vx = lerp(pl.vx, target, Math.min(1, dt*2.6));
+    if(Math.abs(pl.vx) < 4 && mv === 0) pl.vx = 0;
+    if(mv !== 0) pl.facing = mv > 0 ? 1 : -1;
+  }
+  if(jumpEdge && pl.onGround){ pl.vy = -500; pl.onGround = false; }
+  else if(jumpEdge && !pl.onGround && !pl.diving && pl.superPhase === 0 && pl.dashT <= 0){
+    // ☄ 空中でもう一度▲＝メテオプレス（急降下）
+    pl.diving = true;
+    pl.vx *= 0.25;
+    pl.vy = Math.max(pl.vy, 320);
+    cutEvent(2, pl === S.p1 ? 1 : 2);
+  }
+  pl.vy += (pl.diving ? 3600 : 1250) * dt;
   pl.x += pl.vx * dt; pl.y += pl.vy * dt;
   pl.x = clamp(pl.x, ARENA_L + 30, ARENA_R - 30);
-  if(pl.y >= GROUND){ pl.y = GROUND; pl.vy = 0; pl.onGround = true; }
+  if(pl.y >= GROUND){
+    pl.y = GROUND; pl.vy = 0;
+    if(pl.diving){ pl.diving = false; meteorImpact(pl); }   // 着地の瞬間に大衝撃
+    pl.onGround = true;
+  }
   pl.tread += pl.vx * dt;
   pl.pitch = lerp(pl.pitch, clamp(-pl.vx*0.0001,-0.05,0.05), Math.min(1,dt*5));
   if(pl.biteCd > 0) pl.biteCd -= dt;
   if(pl.ramCd > 0) pl.ramCd -= dt;
   if(pl.smashCd > 0) pl.smashCd -= dt;
+  if(pl.dashCd > 0) pl.dashCd -= dt;
+  if(pl.landLag > 0) pl.landLag -= dt;
+  if(pl.cmdWin > 0) pl.cmdWin -= dt;
+  if(pl.comboT > 0){ pl.comboT -= dt; if(pl.comboT <= 0) pl.combo = 0; }
   if(pl.inv > 0) pl.inv -= dt;
   if(pl.hitFlash > 0) pl.hitFlash -= dt;
   // 画面を「短く=噛み／長く溜めて離す=叩きつけ衝撃波」
@@ -370,35 +436,135 @@ function attackResolve(att, def, dt, fx){
     const dx = def.x - att.x;
     const towardOk = att.facing > 0 ? dx > -85 : dx < 85;   // ほぼ近接ならOK
     if(Math.abs(dx) < 150 && towardOk && Math.abs(def.y - att.y) < 105){
-      hitPlayer(def, Math.sign(dx) || att.facing, 16, fx, att.x + att.facing * 40, att.y - 50);
+      hitPlayer(att, def, Math.sign(dx) || att.facing, 16, fx, att.x + att.facing * 40, att.y - 50);
       sfxHit();
     }
   }
   // ① 踏みつけ：相手の上から落下して頭を踏む
-  if(att.vy > 60 && att.stompCd <= 0 && def.inv <= 0 &&
+  if(att.vy > 60 && att.stompCd <= 0 && def.inv <= 0 && !att.diving &&
      Math.abs(att.x - def.x) < 54 && (def.y - att.y) > 26 && (def.y - att.y) < 120){
     att.stompCd = 0.5;
-    hitPlayer(def, Math.sign(att.x - def.x) || att.facing, 14, fx, def.x, def.y - 72);
+    hitPlayer(att, def, Math.sign(att.x - def.x) || att.facing, 14, fx, def.x, def.y - 72);
     att.vy = -340; att.onGround = false;     // 反動でピョン
     sfxHit();
   }
   // ② 旋回して腕を当てる：素早く向きを変えた瞬間、腕の通り道に相手がいれば
-  if(att.spinT <= 0 && att.facing !== att._faceLast && att.swingCd <= 0 && def.inv <= 0 &&
+  if(att.spinT <= 0 && att.dashT <= 0 && att.facing !== att._faceLast && att.swingCd <= 0 && def.inv <= 0 &&
      Math.abs(def.x - att.x) < 105 && Math.abs(def.y - att.y) < 85){
     att.swingCd = 0.45;
-    hitPlayer(def, Math.sign(def.x - att.x) || att.facing, 12, fx, (att.x + def.x) / 2, att.y - 50);
+    hitPlayer(att, def, Math.sign(def.x - att.x) || att.facing, 12, fx, (att.x + def.x) / 2, att.y - 50);
     sfxHit();
   }
   att._faceLast = att.facing;
   // ※ ただ接触（体当たり）するだけではダメージ無し（旋回モードのみ spinContact で有効）
 }
-function hitPlayer(def, dir, dmg, fx, fxx, fxy){
+// ヒット共通処理：コンボ加算＋ヒットストップ＋ダメージ数字（全ダメージ経路から呼ぶ）
+function registerHit(att, dmg, x, y){
+  if(att){
+    att.combo = (att.comboT > 0 ? att.combo : 0) + 1;
+    att.comboT = 1.4;
+  }
+  S.fx.push({ x, y, t: 0, big: dmg >= 14, n: dmg >= 900 ? -1 : Math.round(dmg) });
+  // ヒットストップ：重い一撃ほど時が止まる
+  freezeT = Math.max(freezeT, dmg >= 900 ? 0.32 : dmg >= 26 ? 0.20 : dmg >= 16 ? 0.13 : dmg >= 12 ? 0.08 : 0.05);
+}
+function hitPlayer(att, def, dir, dmg, fx, fxx, fxy){
   dmg = sudden ? 999 : dmg * dmgScale();                 // サドンデスは一撃／終盤は加速
   def.hp = Math.max(0, def.hp - dmg);
   def.inv = 0.35; def.hitFlash = 0.3;                    // 無敵を短く＝連続した圧力
   const kb = 1 + (1 - def.hp/100) * 0.6;                 // 体力が減るほど大きく吹っ飛ぶ
   def.vx = dir * 240 * kb; def.vy = -150 * kb; def.onGround = false;
-  fx.push({ x: fxx, y: fxy, t: 0, big: dmg >= 14 });
+  registerHit(att, dmg, fxx, fxy);
+}
+// ☄ メテオプレス着地の衝撃
+function meteorImpact(pl){
+  const foe = pl === S.p1 ? S.p2 : S.p1;
+  pl.landLag = 0.35;                                     // 外すと大きな隙（リスク）
+  S.shocks.push({ x: pl.x, t: 0, r: 0, owner: pl === S.p1 ? 1 : 2, hit: true, meteor: true });   // 視覚用リング
+  S.fx.push({ x: pl.x, y: GROUND - 10, t: 0, big: true });
+  shake = Math.max(shake, 20);
+  sfxThump(); sfxClank();
+  if(Math.abs(foe.x - pl.x) < 150 && foe.y > GROUND - 90 && foe.inv <= 0){
+    hitPlayer(pl, foe, Math.sign(foe.x - pl.x) || pl.facing, 20, S.fx, foe.x, foe.y - 50);
+    foe.vy = -340;                                       // 高く打ち上げて派手に
+    sfxHit();
+  }
+}
+// ⚡ 突進連撃：接触したら3連ヒットのラッシュ
+function stepDashRush(att, def, dt){
+  if(att.dashT > 0 && !att.dashHitDone && def.inv <= 0 &&
+     Math.abs(att.x - def.x) < 70 && Math.abs(att.y - def.y) < 70){
+    att.dashHitDone = true;
+    att.rushN = 3; att.rushTick = 0;
+    att.dashT = Math.min(att.dashT, 0.05);               // 突進は止まって連撃へ
+  }
+  if(att.rushN > 0){
+    att.rushTick -= dt;
+    if(att.rushTick <= 0){
+      att.rushTick = 0.11; att.rushN--;
+      const last = att.rushN === 0;
+      const dmg = sudden ? 999 : (last ? 8 : 6) * dmgScale();
+      def.hp = Math.max(0, def.hp - dmg);
+      def.hitFlash = 0.3;
+      registerHit(att, dmg, def.x, def.y - 50);
+      if(last){
+        const kb = 1 + (1 - def.hp/100) * 0.6;
+        def.vx = att.dashDir * 320 * kb; def.vy = -200 * kb; def.onGround = false; def.inv = 0.5;
+        shake = Math.max(shake, 10);
+      }else{
+        def.vx = att.dashDir * 40; def.vy = -60; def.onGround = false; def.inv = 0.05;
+      }
+      sfxHit();
+    }
+  }
+}
+// 💥 奥義・鬼神大解体：発動トリガー（◀▶◀▶＋🚀、1ラウンド1回）
+function stepUltraTrigger(pl, inp){
+  const mEdge = inp.missile && !pl._pMissUltra;
+  pl._pMissUltra = inp.missile;
+  if(mEdge && pl.cmdWin > 0 && !pl.ultraUsed && pl.superPhase === 0 && pl.spinT <= 0 && pl.dashT <= 0 && !pl.diving){
+    pl.ultraUsed = true;
+    pl.superPhase = 1; pl.superT = 0.62;
+    pl.cmdWin = 0;
+    pl.missCd = Math.max(pl.missCd, 0.4);                // この🚀入力はミサイルに使わせない
+    shake = Math.max(shake, 8);
+    cutEvent(3, pl === S.p1 ? 1 : 2);
+  }
+}
+// 奥義の進行（シネマ→突貫→フィニッシュ）※発動中は世界が止まる
+function stepUltra(pl, foe, dt){
+  if(!pl.superPhase) return;
+  pl.superT -= dt;
+  if(pl.superPhase === 1){                               // 暗転シネマ
+    if(pl.superT <= 0){
+      pl.superPhase = 2; pl.superT = 0.42;
+      pl.u0x = pl.x;
+      pl.uDir = Math.sign(foe.x - pl.x) || pl.facing;
+      pl.uHit = false;
+      pl.facing = pl.uDir;
+      sfxDash();
+    }
+  }else if(pl.superPhase === 2){                         // 突貫（相手が高く跳んでいれば回避される）
+    const p = clamp(1 - pl.superT / 0.42, 0, 1), e = p * p * (3 - 2 * p);
+    pl.x = lerp(pl.u0x, clamp(foe.x + pl.uDir * 130, ARENA_L + 30, ARENA_R - 30), e);
+    pl.inv = Math.max(pl.inv, 0.2);
+    if(!pl.uHit && Math.abs(pl.x - foe.x) < 62){
+      if(foe.y > GROUND - 90){
+        pl.uHit = true;
+        hitPlayer(pl, foe, pl.uDir, 30, S.fx, foe.x, foe.y - 52);
+        for(let k = 0; k < 4; k++) S.fx.push({ x: foe.x + rnd(-30,30), y: foe.y - 40 + rnd(-30,20), t: k*0.02, big: true });
+        shake = Math.max(shake, 26);
+        sfxKO();
+      }
+    }
+    if(pl.superT <= 0){
+      pl.superPhase = 3;
+      pl.superT = pl.uHit ? 0.5 : 0.7;                   // 外すと硬直が長い（ハイリスク）
+      if(!pl.uHit) cutEvent(4, pl === S.p1 ? 1 : 2);
+    }
+  }else if(pl.superPhase === 3){                         // フィニッシュ／隙
+    if(pl.superT <= 0){ pl.superPhase = 0; }
+  }
 }
 // ミサイル：通常は長押しチャージ→離して発射。特大ゲージ満タン時はボタン押すだけで特大発射
 function stepMissile(pl, inp, dt){
@@ -431,7 +597,7 @@ function stepMissile(pl, inp, dt){
   }
   pl._pMissile = inp.missile;
 }
-// 旋回コマンド：◀▶を素早く交互に8回（▷◁×4）で5秒間スピン状態
+// コマンド検出：◀▶交互（旋回/奥義窓）＋ 同方向2連打（突進）
 function stepSpin(pl, inp, dt){
   if(pl.spinT > 0){ pl.spinT -= dt; pl.spin += dt * 11; }   // 横回転（旋回体ヨー）用
   pl.altT += dt;
@@ -440,9 +606,19 @@ function stepSpin(pl, inp, dt){
   if(inp.left && !pl._pLeft) dir = -1;
   else if(inp.right && !pl._pRight) dir = 1;
   if(dir !== 0){
+    // ⚡ 同方向2連打（0.28秒以内）→ クラッシャーラッシュ（突進）
+    if(dir === pl.tapDir && (S.t - pl.tapT) < 0.28 &&
+       pl.dashCd <= 0 && pl.dashT <= 0 && pl.spinT <= 0 && pl.superPhase === 0 && !pl.diving && pl.landLag <= 0){
+      pl.dashT = 0.30; pl.dashDir = dir; pl.dashCd = 3.2; pl.dashHitDone = false;
+      pl.facing = dir;
+      cutEvent(1, pl === S.p1 ? 1 : 2);
+    }
+    pl.tapDir = dir; pl.tapT = S.t;
     if(pl.lastDir !== 0 && dir !== pl.lastDir) pl.altCount++;
     else pl.altCount = 1;
     pl.lastDir = dir; pl.altT = 0;
+    // 💥 交互4回（◀▶◀▶）で奥義コマンド成立ウィンドウ（🚀で発動）
+    if(pl.altCount >= 4 && !pl.ultraUsed && pl.superPhase === 0) pl.cmdWin = 0.5;
     if(pl.altCount >= 8 && pl.spinT <= 0){
       pl.spinT = 5; pl.spin = 0; pl.altCount = 0;
       shake = Math.max(shake, 10); sfxBell();
@@ -457,7 +633,7 @@ function spinContact(att, def, dt){
   att.spinHitCd -= dt;
   if(Math.abs(att.x - def.x) < 66 && Math.abs(att.y - def.y) < 60 && def.inv <= 0 && att.spinHitCd <= 0){
     att.spinHitCd = 0.3;
-    hitPlayer(def, Math.sign(def.x - att.x) || att.facing, 9, S.fx, (att.x + def.x) / 2, att.y - 46);
+    hitPlayer(att, def, Math.sign(def.x - att.x) || att.facing, 9, S.fx, (att.x + def.x) / 2, att.y - 46);
     att.superGauge = Math.min(100, att.superGauge + 22);   // 旋回でダメージ→特大ゲージ蓄積
     sfxHit();
   }
@@ -478,19 +654,29 @@ function stepSim(dt){
   if(shake > 0) shake = Math.max(0, shake - dt * 40);
   if(countdown > 0) return;            // カウントダウン中は動かない
   if(S.over) return;
-  const in1 = hostInputFor(1);
-  const in2 = vsCPU ? cpuInput(S.p2, S.p1, dt) : hostInputFor(2);
-  stepPlayerKinematics(S.p1, in1, dt);
-  stepPlayerKinematics(S.p2, in2, dt);
-  stepMissile(S.p1, in1, dt); stepMissile(S.p2, in2, dt);
-  stepSpin(S.p1, in1, dt);    stepSpin(S.p2, in2, dt);
-  attackResolve(S.p1, S.p2, dt, S.fx);
-  attackResolve(S.p2, S.p1, dt, S.fx);
-  spinContact(S.p1, S.p2, dt); spinContact(S.p2, S.p1, dt);
-  stepSmash(S.p1, dt); stepSmash(S.p2, dt);
-  // 叩きつけの地を這う衝撃波
+  // 💥 奥義発動中は世界が止まる（シネマ演出：弾も時間も停止）
+  const worldStop = S.p1.superPhase > 0 || S.p2.superPhase > 0;
+  if(worldStop){
+    stepUltra(S.p1, S.p2, dt);
+    stepUltra(S.p2, S.p1, dt);
+  }else{
+    const in1 = hostInputFor(1);
+    const in2 = vsCPU ? cpuInput(S.p2, S.p1, dt) : hostInputFor(2);
+    stepPlayerKinematics(S.p1, in1, dt);
+    stepPlayerKinematics(S.p2, in2, dt);
+    stepSpin(S.p1, in1, dt);    stepSpin(S.p2, in2, dt);
+    stepUltraTrigger(S.p1, in1); stepUltraTrigger(S.p2, in2);
+    stepMissile(S.p1, in1, dt); stepMissile(S.p2, in2, dt);
+    attackResolve(S.p1, S.p2, dt, S.fx);
+    attackResolve(S.p2, S.p1, dt, S.fx);
+    spinContact(S.p1, S.p2, dt); spinContact(S.p2, S.p1, dt);
+    stepDashRush(S.p1, S.p2, dt); stepDashRush(S.p2, S.p1, dt);
+    stepSmash(S.p1, dt); stepSmash(S.p2, dt);
+  }
+  // 叩きつけの地を這う衝撃波（meteor=メテオ着地の視覚リング）※奥義中は弾・時間も停止
+  if(!worldStop)
   for(let i = S.shocks.length - 1; i >= 0; i--){
-    const sh = S.shocks[i]; sh.t += dt; sh.r = sh.t * 760;
+    const sh = S.shocks[i]; sh.t += dt; sh.r = sh.t * (sh.meteor ? 520 : 760);
     const def = sh.owner === 1 ? S.p2 : S.p1;
     if(!sh.hit && Math.abs(def.x - sh.x) <= sh.r + 26 && def.y > GROUND - 46 && def.inv <= 0){
       sh.hit = true;                        // 地上/低空の相手にヒット（高ジャンプは避けられる）
@@ -499,12 +685,13 @@ function stepSim(dt){
       def.inv = 0.5; def.hitFlash = 0.4;
       const dir = Math.sign(def.x - sh.x) || 1;
       def.vx = dir * 360; def.vy = -300; def.onGround = false;
-      S.fx.push({ x: def.x, y: def.y - 50, t: 0, big: true });
+      registerHit(sh.owner === 1 ? S.p1 : S.p2, dmg, def.x, def.y - 50);
       shake = Math.max(shake, 12); sfxHit();
     }
-    if(sh.r > 300) S.shocks.splice(i, 1);
+    if(sh.r > (sh.meteor ? 150 : 300)) S.shocks.splice(i, 1);
   }
   // ミサイルの弾
+  if(!worldStop)
   for(let i = S.waves.length - 1; i >= 0; i--){
     const w = S.waves[i]; w.t += dt; w.x += w.vx * dt;
     const def = w.owner === 1 ? S.p2 : S.p1;
@@ -516,7 +703,7 @@ function stepSim(dt){
       def.hp = Math.max(0, def.hp - md);
       def.inv = 0.45; def.hitFlash = 0.35;
       def.vx = Math.sign(w.vx) * (w.big ? 420 : 300); def.vy = w.big ? -240 : -160; def.onGround = false;
-      S.fx.push({ x: w.x, y: w.y, t: 0, big: true });
+      registerHit(w.owner === 1 ? S.p1 : S.p2, md, w.x, w.y);
       if(w.big) shake = Math.max(shake, 14);
       sfxHit();
       S.waves.splice(i, 1); continue;
@@ -529,7 +716,7 @@ function stepSim(dt){
     }
     if(w.x < ARENA_L - 60 || w.x > ARENA_R + 60) S.waves.splice(i, 1);
   }
-  S.timer = Math.max(0, S.timer - dt);
+  if(!worldStop) S.timer = Math.max(0, S.timer - dt);
   // 勝敗
   if(S.p1.hp <= 0 && S.p2.hp <= 0) S.over = 3;       // 相打ち
   else if(S.p1.hp <= 0) S.over = 2;
@@ -559,7 +746,13 @@ function hostInputFor(side){
 // ---------- CPU（AI） ----------
 function cpuInput(me, foe, dt){
   const P = CPU_PARAM[cpuLevel] || CPU_PARAM[1];
-  const ai = me.ai || (me.ai = { biteWait: 0.5, jumpWait: rnd(1,3), react: 0, want: {} });
+  const ai = me.ai || (me.ai = { biteWait: 0.5, jumpWait: rnd(1,3), react: 0, want: {}, q: [] });
+  if(!ai.q) ai.q = [];
+  // コマンド再生キュー（突進2連打・奥義LRLR+🚀 をフレーム列で入力）
+  if(ai.q.length){
+    const f = ai.q.shift();
+    return { left:!!f.l, right:!!f.r, jump:!!f.j, hold:!!f.h, missile:!!f.m };
+  }
   const dx = foe.x - me.x, adx = Math.abs(dx);
   const toFoe = Math.sign(dx) || -1;
   let left=false, right=false, jump=false, hold=false, missile=false;
@@ -567,6 +760,22 @@ function cpuInput(me, foe, dt){
   // 反応ディレイ（弱いほど鈍い）
   ai.react -= dt;
   if(ai.react <= 0){ ai.react = P.react; ai.targetAdx = 60; }
+
+  // ⚡ 突進：離れている時に2連打コマンド（強いほど頻繁）
+  ai.dashWait = (ai.dashWait === undefined ? rnd(3,6) : ai.dashWait) - dt;
+  if(ai.dashWait <= 0 && me.dashCd <= 0 && me.onGround && adx > 230 && Math.random() < P.useWave){
+    ai.dashWait = rnd(4, 8);
+    const key = toFoe > 0 ? 'r' : 'l';
+    ai.q.push({[key]:1},{[key]:1},{},{},{[key]:1},{[key]:1},{[key]:1},{[key]:1});   // タタッと2連打→押しっぱなし
+  }
+  // ☄ メテオ：空中で相手の頭上付近なら急降下
+  if(!me.onGround && !me.diving && me.vy > -120 && adx < 90 && Math.random() < P.dodge * dt * 8){
+    ai.q.push({j:1},{j:1},{});
+  }
+  // 💥 奥義：つよいCPUのみ、劣勢時に1回（LRLR+🚀）
+  if(cpuLevel >= 2 && !me.ultraUsed && me.superPhase === 0 && me.hp < 55 && adx < 420 && Math.random() < dt * 0.35){
+    ai.q.push({l:1},{l:1},{},{r:1},{r:1},{},{l:1},{l:1},{},{r:1},{r:1},{},{m:1},{m:1},{});
+  }
 
   // 間合い調整
   const range = 60;
@@ -595,6 +804,7 @@ function cpuInput(me, foe, dt){
   ai.jumpWait -= dt;
   if(me.onGround){
     if(incoming && Math.random() < P.dodge){ jump = true; ai.jumpWait = rnd(0.8,1.6); }
+    else if(foe.cmdWin > 0 && !foe.ultraUsed && Math.random() < P.dodge * dt * 20){ jump = true; }  // 奥義の気配→先読みジャンプ
     else if(ai.jumpWait <= 0 && Math.random() < P.jump * dt * 3){ jump = true; ai.jumpWait = rnd(1.5,3.5); }
   }
 
@@ -621,26 +831,33 @@ function broadcastState(force){
                     p.facing, +(p.biteT.toFixed(2)), +(p.jaw.toFixed(2)), +(p.inv.toFixed(2)),
                     +(p.hitFlash.toFixed(2)), Math.round(p.tread),
                     +(p.missCharge.toFixed(2)), +(p.spinT.toFixed(2)), +(p.spin.toFixed(2)), Math.round(p.superGauge), p.pinchUsed?1:0,
-                    +(p.holdT.toFixed(2)), +(p.smashT.toFixed(2))];
+                    +(p.holdT.toFixed(2)), +(p.smashT.toFixed(2)),
+                    +(p.dashT.toFixed(2)), p.diving?1:0, p.superPhase, +(p.superT.toFixed(2)),
+                    p.combo, +(p.comboT.toFixed(1)), p.ultraUsed?1:0, +(p.landLag.toFixed(2)), +(p.cmdWin.toFixed(2))];
+  const cutsOut = [];
+  for(const c of S.cuts){ if(!c.sent){ cutsOut.push([c.k, c.o]); c.sent = true; } }
   send({ t:'s', s:{ a:enc(S.p1), b:enc(S.p2), tm:+S.timer.toFixed(1), ov:S.over, cd:+countdown.toFixed(2),
                     sk:Math.round(shake), rw:roundWins.slice(), rn:roundNo, so:seriesOver?1:0, sd:sudden?1:0,
-                    sh: S.shocks.map(s=>[Math.round(s.x),Math.round(s.r),s.owner]),
+                    fz:+freezeT.toFixed(2), ct:cutsOut,
+                    sh: S.shocks.map(s=>[Math.round(s.x),Math.round(s.r),s.owner,s.meteor?1:0]),
                     wv: S.waves.map(w=>[Math.round(w.x),Math.round(w.y),w.vx<0?-1:1,w.owner,w.big?1:0]),
-                    fx: S.fx.filter(f=>f.t<0.05).map(f=>[Math.round(f.x),Math.round(f.y),f.big?1:0,f.dodge?1:0]) } });
+                    fx: S.fx.filter(f=>f.t<0.05).map(f=>[Math.round(f.x),Math.round(f.y),f.big?1:0,f.dodge?1:0,f.n||0]) } });
 }
 function decodeNet(){
   const s = net.netState; if(!s) return;
-  if(!S) S = { p1: mkPlayer(0,1), p2: mkPlayer(0,-1), t:0, timer:MATCH_TIME, over:0, fx:[], waves:[], shocks:[] };
+  if(!S) S = { p1: mkPlayer(0,1), p2: mkPlayer(0,-1), t:0, timer:MATCH_TIME, over:0, fx:[], waves:[], shocks:[], cuts:[] };
   // ゲスト側：受信値へスムーズ補間
   smoothToward(S.p1, s.a); smoothToward(S.p2, s.b);
   const prevOver = S.over;
   S.timer = s.tm; S.over = s.ov; countdown = s.cd; shake = s.sk || 0;
+  freezeT = s.fz || 0;
   if(s.rw){ roundWins = s.rw; roundNo = s.rn || 1; seriesOver = !!s.so; }
   const wasSudden = sudden; sudden = !!s.sd;
   if(sudden && !wasSudden) sfxBell();   // サドンデス突入音
   S.waves = (s.wv || []).map(w=>({ x:w[0], y:w[1], vx:w[2], owner:w[3], big:!!w[4], t:0 }));
-  S.shocks = (s.sh || []).map(a=>({ x:a[0], r:a[1], owner:a[2], t:0, hit:true }));
-  if(s.fx) for(const f of s.fx) S.fx.push({ x:f[0], y:f[1], t:0, big:!!f[2], dodge:!!f[3] });
+  S.shocks = (s.sh || []).map(a=>({ x:a[0], r:a[1], owner:a[2], meteor:!!a[3], t:0, hit:true }));
+  if(s.fx) for(const f of s.fx) S.fx.push({ x:f[0], y:f[1], t:0, big:!!f[2], dodge:!!f[3], n:f[4]||0 });
+  if(s.ct) for(const c of s.ct) applyCut(c[0], c[1]);   // 技名カットイン再生
   if(S.over && !prevOver){
     phase = 'result'; sfxBell();
     if(S.p1.hp <= 0 || S.p2.hp <= 0){ koT = 1.0; sfxKO(); }
@@ -658,6 +875,8 @@ function smoothToward(pl, arr){
   pl.tread=arr[9];
   pl.missCharge=arr[10]||0; pl.spinT=arr[11]||0; pl.spin=arr[12]||0; pl.superGauge=arr[13]||0;
   pl.pinchUsed=!!arr[14]; pl.holdT=arr[15]||0; pl.smashT=arr[16]||0;
+  pl.dashT=arr[17]||0; pl.diving=!!arr[18]; pl.superPhase=arr[19]||0; pl.superT=arr[20]||0;
+  pl.combo=arr[21]||0; pl.comboT=arr[22]||0; pl.ultraUsed=!!arr[23]; pl.landLag=arr[24]||0; pl.cmdWin=arr[25]||0;
 }
 
 // ---------- メインループ ----------
@@ -668,7 +887,9 @@ function loop(now){
   if(phase === 'play' || phase === 'result'){
     if(countdown > 0) countdown = Math.max(0, countdown - raw);
     if(net.isHost){
-      stepSim(raw);
+      // ヒットストップ：一撃の重みで世界が一瞬止まる
+      if(freezeT > 0) freezeT = Math.max(0, freezeT - raw);
+      else stepSim(raw);
       // ラウンド終了→シリーズ継続なら一定時間後に次ラウンド自動開始
       if(phase === 'result' && !seriesOver){
         roundEndT -= raw;
@@ -690,6 +911,28 @@ function loop(now){
     }
     // FXの寿命
     if(S) for(let i=S.fx.length-1;i>=0;i--){ S.fx[i].t += raw; if(S.fx[i].t>0.5) S.fx.splice(i,1); }
+    // 技名カットインの寿命
+    if(cutin){ cutin.t += raw; if(cutin.t > (cutin.big ? 1.3 : 0.95)) cutin = null; }
+    if(S && S.cuts) for(let i=S.cuts.length-1;i>=0;i--){ if(S.cuts[i].sent) S.cuts.splice(i,1); }
+    // 残像（突進・旋回・奥義中に発生）
+    if(S && phase === 'play' && countdown <= 0){
+      for(const [pl, idx] of [[S.p1,1],[S.p2,2]]){
+        if(pl.dashT > 0 || pl.superPhase === 2 || pl.spinT > 0){
+          ghosts.push({ x: pl.x, y: pl.y, f: pl.facing, i: idx, a: 0.32 });
+        }
+      }
+      if(ghosts.length > 40) ghosts.splice(0, ghosts.length - 40);
+    }
+    for(let i=ghosts.length-1;i>=0;i--){ ghosts[i].a -= raw * 1.5; if(ghosts[i].a <= 0) ghosts.splice(i,1); }
+    // 勝利紙吹雪
+    if(seriesOver && phase === 'result' && !konfettiDone){
+      konfettiDone = true;
+      for(let i=0;i<70;i++) konfetti.push({ x: rnd(0,W), y: rnd(-H*0.5,0), vx: rnd(-40,40), vy: rnd(60,180),
+        s: rnd(4,9), rot: rnd(0,6.28), vr: rnd(-4,4), c: [PINK,BLUE,'#ffe14d','#7ad36b','#fff'][i%5] });
+    }
+    for(let i=konfetti.length-1;i>=0;i--){ const k=konfetti[i];
+      k.x += (k.vx + Math.sin(perfNow()/300 + i)*30) * raw; k.y += k.vy * raw; k.rot += k.vr * raw;
+      if(k.y > H + 20) konfetti.splice(i,1); }
     if(koT > 0) koT = Math.max(0, koT - raw);
     // 緊張演出の音：自分が瀕死なら心音、残り時間カウントダウン
     if(S && phase === 'play' && countdown <= 0 && !S.over){
@@ -739,24 +982,38 @@ function draw(){
     cx.translate(fx, fy); cx.scale(z, z); cx.translate(-fx, -fy);
   }
 
-  // 叩きつけ衝撃波（地を這う）
+  // 叩きつけ衝撃波（地を這う）／メテオ着地リング（紫）
   for(const sh of S.shocks){
-    const a = clamp(1 - sh.r/300, 0, 1);
-    cx.strokeStyle = 'rgba(255,160,40,'+(0.5*a)+')'; cx.lineWidth = 16;
+    const maxR = sh.meteor ? 150 : 300;
+    const a = clamp(1 - sh.r/maxR, 0, 1);
+    const c1 = sh.meteor ? '190,120,255' : '255,160,40';
+    const c2 = sh.meteor ? '235,200,255' : '255,235,120';
+    cx.strokeStyle = 'rgba('+c1+','+(0.5*a)+')'; cx.lineWidth = 16;
     cx.beginPath(); cx.arc(sh.x, GROUND, sh.r*0.92, Math.PI, 0); cx.stroke();
-    cx.strokeStyle = 'rgba(255,235,120,'+(0.9*a)+')'; cx.lineWidth = 7;
+    cx.strokeStyle = 'rgba('+c2+','+(0.9*a)+')'; cx.lineWidth = 7;
     cx.beginPath(); cx.arc(sh.x, GROUND, sh.r, Math.PI, 0); cx.stroke();
     // 砂埃
     cx.fillStyle='rgba(200,180,150,'+(0.4*a)+')';
     cx.beginPath(); cx.arc(sh.x+sh.r, GROUND-6, 8*a+4, 0, 7); cx.fill();
     cx.beginPath(); cx.arc(sh.x-sh.r, GROUND-6, 8*a+4, 0, 7); cx.fill();
   }
+  // 残像（突進・旋回・奥義）
+  for(const g of ghosts){
+    const c = g.i === 2 ? BLUE : PINK;
+    cx.save(); cx.globalAlpha = Math.max(0, g.a);
+    cx.translate(g.x, g.y); cx.scale(g.f, 1);
+    cx.fillStyle = c;
+    roundRect(-50, -26, 100, 26, 12); cx.fill();     // クローラー
+    roundRect(-58, -62, 92, 36, 8); cx.fill();       // 旋回体
+    roundRect(6, -100, 34, 42, 6); cx.fill();        // キャブ
+    cx.restore();
+  }
   // ミサイルの弾
   for(const w of S.waves) drawWave(w);
   // プレイヤー（奥→手前）
   drawMachine(S.p1, 1);
   drawMachine(S.p2, 2);
-  // ヒットエフェクト
+  // ヒットエフェクト＋ダメージ数字
   for(const f of S.fx){
     const a = clamp(1 - f.t/0.5, 0, 1);
     cx.save(); cx.globalAlpha = a;
@@ -769,9 +1026,91 @@ function draw(){
       cx.fillStyle = f.dodge ? '#9effff' : '#ffe14d';
       cx.fillText(f.dodge ? '回避！' : (f.big?'ガツン！':'ゴツ！'), f.x, f.y - 16 - f.t*30);
     }
+    if(f.n){   // ダメージ数字（-1=FINISH!）
+      cx.font = 'bold ' + (f.n < 0 ? 30 : (f.big?22:16)) + 'px ' + FONT;
+      cx.fillStyle = f.n < 0 ? '#ff3030' : '#fff';
+      cx.strokeStyle = 'rgba(0,0,0,.6)'; cx.lineWidth = 3;
+      const dy = f.y + 14 + f.t*46;
+      const txt = f.n < 0 ? 'FINISH!!' : '-' + f.n;
+      cx.strokeText(txt, f.x, dy); cx.fillText(txt, f.x, dy);
+    }
     cx.restore();
   }
   cx.restore(); // shake / zoom
+
+  // ===== 集中線（突進・奥義突貫中のスピード感） =====
+  if(S.p1.dashT > 0 || S.p2.dashT > 0 || S.p1.superPhase === 2 || S.p2.superPhase === 2){
+    cx.save(); cx.globalAlpha = 0.35;
+    cx.strokeStyle = '#fff'; cx.lineWidth = 2;
+    for(let i = 0; i < 14; i++){
+      const yy = ((i * 97 + Math.floor(performance.now()/16) * 37) % H);
+      const ln = 60 + (i * 53) % 120;
+      cx.beginPath(); cx.moveTo((i*173)%W, yy); cx.lineTo((i*173)%W + ln, yy); cx.stroke();
+    }
+    cx.restore();
+  }
+  // ===== 奥義シネマ（暗転＋スポットライト＋大文字） =====
+  const up = S.p1.superPhase ? S.p1 : (S.p2.superPhase ? S.p2 : null);
+  if(up){
+    const uidx = up === S.p1 ? 1 : 2;
+    const ucol = uidx === 2 ? BLUE : PINK;
+    if(up.superPhase === 1){
+      const pv = 1 - up.superT / 0.62;
+      cx.fillStyle = 'rgba(8,4,16,' + (0.75 * Math.min(1, pv*3)) + ')'; cx.fillRect(0,0,W,H);
+      // スポットライト
+      const g = cx.createRadialGradient(up.x, up.y-50, 20, up.x, up.y-50, 190);
+      g.addColorStop(0,'rgba(255,255,230,.5)'); g.addColorStop(1,'rgba(255,255,230,0)');
+      cx.fillStyle = g; cx.beginPath(); cx.arc(up.x, up.y-50, 190, 0, 7); cx.fill();
+      // 稲妻フラッシュ
+      if(Math.random() < 0.18){ cx.fillStyle='rgba(255,255,255,.25)'; cx.fillRect(0,0,W,H); }
+      // 大文字
+      cx.textAlign='center';
+      const sc2 = 1 + Math.max(0, 0.3 - pv) * 3;
+      cx.save(); cx.translate(W/2, H*0.34); cx.scale(sc2, sc2);
+      cx.font = 'bold 22px ' + FONT; cx.fillStyle = '#ffe14d';
+      cx.fillText('⚡ 奥 義 ⚡', 0, -46);
+      cx.font = 'bold 54px ' + FONT;
+      cx.strokeStyle = ucol; cx.lineWidth = 10; cx.strokeText('鬼 神 大 解 体', 0, 8);
+      cx.fillStyle = '#fff'; cx.fillText('鬼 神 大 解 体', 0, 8);
+      cx.restore();
+    }else if(up.superPhase === 2){
+      cx.fillStyle = 'rgba(120,20,40,.16)'; cx.fillRect(0,0,W,H);
+    }else if(up.superPhase === 3 && !up.uHit){
+      cx.fillStyle = 'rgba(60,60,80,.25)'; cx.fillRect(0,0,W,H);   // 外した気まずさ
+    }
+  }
+  // ===== 技名カットイン（帯） =====
+  if(cutin && !cutin.big){
+    const ct = cutin.t, dur = 0.95;
+    const k = ct < 0.15 ? ct/0.15 : ct > dur-0.2 ? (dur-ct)/0.2 : 1;
+    cx.save(); cx.globalAlpha = clamp(k,0,1);
+    cx.fillStyle = 'rgba(15,8,26,.82)';
+    cx.save(); cx.transform(1,0,-0.3,1,0,0); cx.fillRect(90, 118, W+160, 54); cx.restore();
+    cx.fillStyle = cutin.col;
+    cx.save(); cx.transform(1,0,-0.3,1,0,0); cx.fillRect(90, 166, W+160, 6); cx.restore();
+    cx.textAlign='center';
+    const tx2 = W/2 + (1-k)*160;
+    cx.font = 'bold 30px ' + FONT;
+    cx.strokeStyle = cutin.col; cx.lineWidth = 6; cx.strokeText(cutin.name, tx2, 152);
+    cx.fillStyle = '#fff'; cx.fillText(cutin.name, tx2, 152);
+    cx.font = 'bold 13px ' + FONT; cx.fillStyle = '#ffd0e4';
+    cx.fillText(cutin.sub, tx2, 176);
+    cx.restore();
+  }
+  // ===== コンボカウンター =====
+  for(const [pl, idx] of [[S.p1,1],[S.p2,2]]){
+    if(pl.combo >= 2 && pl.comboT > 0){
+      const bx = idx === 1 ? 120 : W - 120;
+      const pop = 1 + Math.max(0, pl.comboT - 1.15) * 3;
+      cx.save(); cx.translate(bx, 150); cx.scale(pop, pop); cx.textAlign='center';
+      cx.font = 'bold 34px ' + FONT;
+      cx.strokeStyle = '#000'; cx.lineWidth = 6;
+      cx.strokeText(pl.combo + ' COMBO!', 0, 0);
+      cx.fillStyle = idx === 2 ? BLUE_L : PINK_L;
+      cx.fillText(pl.combo + ' COMBO!', 0, 0);
+      cx.restore();
+    }
+  }
 
   // ===== 緊張演出オーバーレイ =====
   const meP = net.isHost ? S.p1 : S.p2, foeP = net.isHost ? S.p2 : S.p1;
@@ -835,10 +1174,22 @@ function drawHUD(){
   // 特大ミサイル ゲージ（回避＆旋回ダメージで蓄積）
   drawSuper(20, 70, 240, S.p1.superGauge, false);
   drawSuper(W-20-240, 70, 240, S.p2.superGauge, true);
+  // ⚡奥義バッジ（1ラウンド1回・未使用なら光る）
+  const badge = (x, pl, right) => {
+    const on = !pl.ultraUsed;
+    cx.font = 'bold 11px ' + FONT; cx.textAlign = right ? 'right' : 'left';
+    cx.fillStyle = on ? (Math.floor(performance.now()/400)%2 ? '#d28cff' : '#ffe14d') : 'rgba(255,255,255,.28)';
+    cx.fillText(on ? '⚡奥義OK（◀▶◀▶+🚀）' : '⚡奥義 使用済', x, 92);
+  };
+  badge(20, S.p1, false); badge(W-20, S.p2, true);
   // ヒント（自分の状態に応じて）
   const me = youSide()===1 ? S.p1 : S.p2;
   cx.textAlign='center';
-  if(me.spinT > 0){
+  if(me.cmdWin > 0 && !me.ultraUsed){
+    cx.fillStyle = Math.floor(performance.now()/140)%2 ? '#d28cff' : '#fff';
+    cx.font='bold 18px '+FONT;
+    cx.fillText('⚡ コマンド成立！！ 今すぐ🚀で奥義発動！！ ⚡', W/2, 100);
+  }else if(me.spinT > 0){
     cx.fillStyle='#ffe14d'; cx.font='bold 16px '+FONT;
     cx.fillText('🌀 旋回中！ 相手にぶつかれ！（あと'+Math.ceil(me.spinT)+'秒）', W/2, 100);
   }else if(me.superGauge >= 100){
@@ -962,10 +1313,29 @@ function drawMachine(pl, idx){
     grd.addColorStop(1,'rgba(255,160,40,0)');
     cx.fillStyle=grd; cx.beginPath(); cx.arc(0,-52,rr,0,7); cx.fill();
   }
+  // ☄ メテオプレス急降下の炎
+  if(pl.diving){
+    for(let i=0;i<3;i++){
+      const fw = 16 - i*4, fh = 34 + i*16 + Math.sin(T*40+i)*8;
+      cx.fillStyle = ['rgba(255,220,80,.8)','rgba(255,140,40,.6)','rgba(255,60,30,.4)'][i];
+      cx.beginPath();
+      cx.moveTo(-fw, -110); cx.lineTo(fw, -110); cx.lineTo(0, -110 - fh);
+      cx.closePath(); cx.fill();
+    }
+  }
+  // ⚡ コマンド成立の紫スパーク（🚀で奥義！）
+  if(pl.cmdWin > 0 && !pl.ultraUsed){
+    for(let i=0;i<5;i++){ const a2=T*14+i*1.26;
+      cx.fillStyle='rgba(210,140,255,.9)';
+      cx.beginPath(); cx.arc(Math.cos(a2)*54, -50+Math.sin(a2)*40, 3.4, 0, 7); cx.fill(); }
+  }
   cx.save();
   if(flash) cx.globalAlpha = 0.5;
   cx.scale(pl.facing, 1);
   cx.rotate(pl.pitch * pl.facing);
+  // 突進・奥義突貫は前のめりに
+  if(pl.dashT > 0) cx.rotate(0.10);
+  else if(pl.superPhase === 2) cx.rotate(0.14);
   // クローラー（土台は回らない）
   cx.fillStyle = '#3c3c44'; roundRect(-50,-26,100,26,12); cx.fill();
   cx.fillStyle = '#55555e';
@@ -1112,14 +1482,24 @@ function drawTouch(){
     cx.fillStyle='#fff'; cx.font='bold '+Math.round(b.r*0.7)+'px '+FONT; cx.textAlign='center';
     cx.fillText(b.label,b.x,b.y+2); cx.globalAlpha=1;
   }
-  // 操作ヒント
+  // 操作ヒント（基本／コマンド技を交互に表示）
   cx.globalAlpha=0.5; cx.fillStyle='#fff'; cx.font='bold 12px '+FONT; cx.textAlign='center';
-  cx.fillText('タップ=噛む／長押し→離す=叩きつけ🔨／🚀長押し=ミサイル／◀▶交互4回=旋回🌀', W/2, H-20); cx.globalAlpha=1;
+  const hintB = Math.floor(performance.now()/4000)%2 === 1;
+  cx.fillText(hintB
+    ? '⚡▶▶2連打=突進連撃／☄空中で▲=メテオ落下／💥◀▶◀▶+🚀=奥義(1回)'
+    : 'タップ=噛む／長押し→離す=叩きつけ🔨／🚀長押し=ミサイル／◀▶交互4回=旋回🌀', W/2, H-20);
+  cx.globalAlpha=1;
   cx.textBaseline='alphabetic';
 }
 
 function drawResult(){
   cx.fillStyle='rgba(20,12,28,.62)'; cx.fillRect(0,0,W,H);
+  // 🎊 勝利紙吹雪
+  for(const k of konfetti){
+    cx.save(); cx.translate(k.x, k.y); cx.rotate(k.rot);
+    cx.fillStyle = k.c; cx.fillRect(-k.s/2, -k.s/3, k.s, k.s*0.66);
+    cx.restore();
+  }
   cx.textAlign='center';
   const winner = S.over;   // 1=P1, 2=P2, 3=引き分け
   if(seriesOver){
