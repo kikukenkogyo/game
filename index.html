@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>菊建クラッシャー ～ピンクの水玉重機とキクリン、参上！～</title>
+<title>菊建クラッシャー ～ピンクの水玉重機とキクペディア、参上！～</title>
 <style>
   html,body{margin:0;padding:0;background:#2a2138;height:100%;overflow:hidden;overscroll-behavior:none;}
   #wrap{display:flex;align-items:center;justify-content:center;height:100%;}
@@ -2710,7 +2710,7 @@ function drawExcavator(p){
   if(flash) cx.globalAlpha = 1;
   cx.restore();
 }
-// ---------- キクリン（前の名前はガブ。アームの先でかみつく。2026-11 酒井さん「菊建ボットのキャラをゲームの主人公に」） ----------
+// ---------- キクペディア（前の名前はガブ。アームの先でかみつく。2026-11 酒井さん「菊建ボットのキャラをゲームの主人公に」） ----------
 // ピンク水玉の丸い体・大きい口・とがった歯・左右ちがう目・小さい黄色ヘルメット。ハサミと同じ場所・同じ開き方（jaw）で動く
 function drawNibbler(x, y, a, jaw, S){
   cx.save();
@@ -2803,7 +2803,7 @@ function drawNibbler(x, y, a, jaw, S){
   cx.restore();
 }
 function drawNibblerClassic(x, y, a, jaw, S){
-  // ハサミ型クラッシャー（TS1100風大割機）。2026-11 からはキクリン（drawNibbler）を使う。戻すときは drawExcavator の呼び先をこちらに
+  // ハサミ型クラッシャー（TS1100風大割機）。2026-11 からはキクペディア（drawNibbler）を使う。戻すときは drawExcavator の呼び先をこちらに
   cx.save();
   cx.translate(x, y);
   cx.rotate(a);
@@ -3821,14 +3821,14 @@ function drawTitle(){
   const lx = W/2 - 245;
   if(touchMode){
     cx.fillText('🚜  左下の ◀ ▶ … 走行（スピードに乗って体当たり！）　▲ … ジャンプ', lx, 276);
-    cx.fillText('🦷  画面をタッチ … キクリンがガブガブかみ壊す（押しっぱなしOK）', lx, 302);
-    cx.fillText('🐦  ステージ3からカラスがフン爆撃！キクリンで追い払え', lx, 328);
+    cx.fillText('🦷  画面をタッチ … キクペディアがガブガブかみ壊す（押しっぱなしOK）', lx, 302);
+    cx.fillText('🐦  ステージ3からカラスがフン爆撃！キクペディアで追い払え', lx, 328);
     cx.fillText('💥  💗ボタン … 必殺ラブ＆クラッシュ→ハートビーム解放（必殺MAX）', lx, 354);
     cx.fillText('🔨  ⚒ボタン … 最終手段！オペレーター大ハンマー（漢気MAX）', lx, 380);
   }else{
     cx.fillText('🚜  A / D … 走行（スピードに乗って体当たり！）　W … ジャンプ', lx, 276);
-    cx.fillText('🦷  クリック長押し … キクリンがガブガブかみ壊す', lx, 302);
-    cx.fillText('🐦  ステージ3からカラスがフン爆撃！キクリンで追い払え', lx, 328);
+    cx.fillText('🦷  クリック長押し … キクペディアがガブガブかみ壊す', lx, 302);
+    cx.fillText('🐦  ステージ3からカラスがフン爆撃！キクペディアで追い払え', lx, 328);
     cx.fillText('💥  スペース … 必殺ラブ＆クラッシュ→ハートビーム解放（必殺MAX）', lx, 354);
     cx.fillText('🔨  E … 最終手段！オペレーター降車→大ハンマー（漢気MAX）', lx, 380);
   }
