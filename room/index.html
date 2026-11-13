@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>キクペディアの部屋</title>
+<link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@700;800;900&display=swap" rel="stylesheet">
+<!--
+  キクペディアの部屋（2026-11-13 酒井さん「こいつが動き回る場所がほしい」→ 案1）
+  ・3Dのキクペディアが部屋の中を歩き回り、コンクリートを見つけると食べに行く。押すと反応して、ひとこと話す
+  ・床を押すと、そこにコンクリートが落ちてくる
+  ・?kanban=1 を付けると、ボタンを消した「映しっぱなし用」（事務所の電子黒板など）
+  ・セリフは下の LINES / EAT_LINES / POKE_LINES に足すだけ。丁寧語＋「！」
+-->
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{width:100%;height:100%;overflow:hidden;background:#ff4fa3;font-family:"M PLUS Rounded 1c","Yu Gothic UI","Meiryo",sans-serif;font-weight:800;color:#2a2228;touch-action:none;user-select:none}
+canvas{display:block;width:100%;height:100%}
+#title{position:fixed;left:14px;top:12px;background:#2a2228;color:#fff;border-radius:18px;padding:8px 18px;font-size:clamp(15px,3.6vw,24px);font-weight:900;box-shadow:0 5px 0 rgba(42,34,40,.25)}
+#bubble{position:fixed;left:0;top:0;width:max-content;max-width:min(78vw,420px);background:#fff;border:4px solid #2a2228;border-radius:22px;padding:10px 18px;font-size:clamp(15px,3.9vw,24px);line-height:1.4;
+  transform:translate(-50%,-100%);opacity:0;transition:opacity .18s;pointer-events:none;box-shadow:0 6px 0 rgba(42,34,40,.22);text-align:center}
+#bubble:after{content:"";position:absolute;left:50%;bottom:-16px;margin-left:-11px;border:11px solid transparent;border-top-color:#2a2228;border-bottom-width:0}
+#btns{position:fixed;left:0;right:0;bottom:max(12px,env(safe-area-inset-bottom));display:flex;gap:10px;justify-content:center;flex-wrap:wrap;padding:0 10px}
+#btns button,#btns a{font:inherit;font-weight:900;font-size:clamp(14px,3.6vw,22px);border:0;border-radius:18px;padding:11px 18px;background:#ffd21f;color:#2a2228;box-shadow:0 6px 0 rgba(42,34,40,.3);text-decoration:none;cursor:pointer}
+#btns a{background:#fff}
+#btns button:active,#btns a:active{transform:translateY(4px);box-shadow:0 2px 0 rgba(42,34,40,.3)}
+#hint{position:fixed;right:14px;top:14px;background:rgba(255,255,255,.9);border-radius:14px;padding:6px 12px;font-size:clamp(11px,2.8vw,16px)}
+.kanban #btns,.kanban #hint{display:none}
+#err{position:fixed;inset:0;display:none;align-items:center;justify-content:center;text-align:center;padding:30px;font-size:20px;color:#fff}
+</style></head>
+<body>
+<canvas id="c"></canvas>
+<div id="title">キクペディアの部屋</div>
+<div id="hint">押すと、反応します</div>
+<div id="bubble"></div>
+<div id="btns">
+  <button id="bFeed">🧱 コンクリートをあげる</button>
+  <button id="bTalk">💬 話しかける</button>
+  <a href="https://app.notion.com/p/b6f3c51f6fc68297aa850137011e46a6" target="_blank" rel="noopener">📖 菊建ページ</a>
+</div>
+<div id="err">この端末では、3Dを表示できませんでした。</div>
+<script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
+<script>
+'use strict';
+// ---------- セリフ（丁寧語＋「！」。足すときは1行足すだけ） ----------
+const LINES = ['どうも！キクペディアです！', '分からないことは、LINEで聞いてください！', '「クラッシャーどこ？」と聞けば、場所を答えます！',
+  '菊建ページの中身は、全部、頭に入っています！', '「九段の工程表見せて」で、資料を出します！', '今日も、ご安全に！', '好きな食べ物は、コンクリートです！',
+  '報告は、LINEでひとこと話すだけです！', '重機はピンク、仕事はガチ。それが菊建です！'];
+const EAT_LINES = ['いただきます！', '鉄筋入りは、歯ごたえが最高です！', 'ごちそうさまでした！', 'おかわり、ください！', 'うまいです！'];
+const POKE_LINES = ['はい、キクペディアです！', '押されると、ちょっとうれしいです！', 'くすぐったいです！', '呼びましたか？', 'ご用は、LINEでどうぞ！'];
+const KANBAN = /[?&]kanban=1/.test(location.search);
+if (KANBAN) document.body.classList.add('kanban');
+
+const R = 40;                         // キクペディアの半径
+let W = 0, H = 0, area = { x: 250, z0: -150, z1: 170 };
+let renderer, scene, camera;
+try { renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: true }); }
+catch (e) { document.getElementById('err').style.display = 'flex'; throw e; }
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.shadowMap.enabled = true;
+scene = new THREE.Scene(); scene.background = new THREE.Color(0xff4fa3);
+camera = new THREE.PerspectiveCamera(40, 1, 10, 4000);
+
+// ---------- 絵（水玉）をその場で作る ----------
+function dotTex(bg, dot, size, r, rep) {
+  const cv = document.createElement('canvas'); cv.width = cv.height = size; const g = cv.getContext('2d');
+  g.fillStyle = bg; g.fillRect(0, 0, size, size); g.fillStyle = dot;
+  for (const [x, y] of [[0.25, 0.25], [0.75, 0.75]]) { g.beginPath(); g.arc(x * size, y * size, r, 0, 7); g.fill(); }
+  const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rep[0], rep[1]); return t;
+}
+const skinMat = new THREE.MeshLambertMaterial({ map: dotTex('#ff2e93', '#ffffff', 128, 20, [7, 3.5]) });
+const mouthMat = new THREE.MeshLambertMaterial({ color: 0x4a0a22, side: THREE.DoubleSide });
+const toothMat = new THREE.MeshLambertMaterial({ color: 0xfff8e8 });
+const eyeMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+const pupilMat = new THREE.MeshLambertMaterial({ color: 0x120c10 });
+const helmMat = new THREE.MeshLambertMaterial({ color: 0xffd21f });
+const tongueMat = new THREE.MeshLambertMaterial({ color: 0xff5577 });
+const footMat = new THREE.MeshLambertMaterial({ color: 0x2a2228 });
+const concMat = new THREE.MeshLambertMaterial({ color: 0x9a9a9a });
+const rebarMat = new THREE.MeshLambertMaterial({ color: 0x7a4a2a });
+
+// ---------- 部屋 ----------
+scene.add(new THREE.HemisphereLight(0xffffff, 0xffb8d8, 0.85));
+const sun = new THREE.DirectionalLight(0xffffff, 0.75); sun.position.set(-180, 420, 260); sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024); sun.shadow.camera.left = -420; sun.shadow.camera.right = 420; sun.shadow.camera.top = 420; sun.shadow.camera.bottom = -420; sun.shadow.camera.far = 1200;
+scene.add(sun);
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(2400, 1400), new THREE.MeshLambertMaterial({ map: dotTex('#ffc9df', '#ff9dc6', 128, 18, [24, 14]) }));
+floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
+const wall = new THREE.Mesh(new THREE.PlaneGeometry(2400, 700), new THREE.MeshLambertMaterial({ map: dotTex('#ff4fa3', '#ffffff', 128, 17, [20, 6]) }));
+wall.position.set(0, 350, -260); scene.add(wall);
+const skirt = new THREE.Mesh(new THREE.BoxGeometry(2400, 26, 10), new THREE.MeshLambertMaterial({ color: 0x2a2228 })); skirt.position.set(0, 13, -255); scene.add(skirt);
+
+// ---------- キクペディア ----------
+const kiku = new THREE.Group(); scene.add(kiku);
+const body = new THREE.Group(); kiku.add(body);
+const meshes = [];
+function add(parent, geo, mat) { const m = new THREE.Mesh(geo, mat); m.castShadow = true; parent.add(m); meshes.push(m); return m; }
+function half(top) {
+  const hinge = new THREE.Group(); hinge.position.set(0, 0, -R * 0.86); body.add(hinge);
+  const g = new THREE.Group(); g.position.set(0, 0, R * 0.86); hinge.add(g);
+  add(g, new THREE.SphereGeometry(R, 36, 18, 0, Math.PI * 2, top ? 0 : Math.PI / 2, Math.PI / 2), skinMat);
+  const lid = add(g, new THREE.CircleGeometry(R - 0.6, 36), mouthMat); lid.rotation.x = Math.PI / 2; lid.castShadow = false;
+  for (let k = 0; k < 9; k++) {                         // 歯：前の半周に、口の中へ向けて並べる
+    const ph = -1.35 + k * (2.7 / 8), big = (k % 2 ? 0.75 : 1.1);
+    const t = add(g, new THREE.ConeGeometry(4.6, 13 * big, 5), toothMat);
+    t.position.set(Math.sin(ph) * R * 0.85, top ? -6 * big : 6 * big, Math.cos(ph) * R * 0.85);
+    if (top) t.rotation.x = Math.PI;
+  }
+  return { hinge, g };
+}
+const up = half(true), low = half(false);
+const tongue = add(low.g, new THREE.SphereGeometry(R * 0.55, 18, 10), tongueMat); tongue.scale.set(0.8, 0.22, 1.0); tongue.position.set(0, -3, 6);
+const eyes = [];
+for (const e of [{ x: -15, y: 22, z: 25, r: 13, px: -3, py: 1 }, { x: 14, y: 26, z: 22, r: 9.5, px: 3, py: -1.5 }]) {   // 大きさも向きもちがう目
+  const ball = add(up.g, new THREE.SphereGeometry(e.r, 20, 14), eyeMat); ball.position.set(e.x, e.y, e.z);
+  const pu = add(up.g, new THREE.SphereGeometry(e.r * 0.44, 14, 10), pupilMat); pu.position.set(e.x + e.px, e.y + e.py, e.z + e.r * 0.6);
+  const gl = add(up.g, new THREE.SphereGeometry(e.r * 0.15, 8, 6), eyeMat); gl.position.set(e.x + e.px + e.r * 0.16, e.y + e.py + e.r * 0.2, e.z + e.r * 0.98); gl.castShadow = false;
+  eyes.push({ ball, pu, gl, py: pu.position.y });
+}
+const helm = new THREE.Group(); helm.position.set(-9, R - 5, -4); helm.rotation.z = 0.3; up.g.add(helm);
+const hd = add(helm, new THREE.SphereGeometry(17, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), helmMat); hd.scale.y = 0.82;
+add(helm, new THREE.CylinderGeometry(21, 21, 3, 24), new THREE.MeshLambertMaterial({ color: 0xf2b500 }));
+const feet = [-1, 1].map(function (s) { const f = add(kiku, new THREE.SphereGeometry(13, 14, 10), footMat); f.scale.set(1.0, 0.6, 1.5); f.position.set(s * R * 0.45, 8, 6); return f; });
+const BODY_Y = R + 9;
+body.position.y = BODY_Y;
+
+// ---------- コンクリート ----------
+const blocks = [], crumbs = [];
+function addBlock(x, z) {
+  if (blocks.length >= 6) return;
+  const g = new THREE.Group();
+  const b = new THREE.Mesh(new THREE.BoxGeometry(30, 26, 30), concMat); b.castShadow = true; g.add(b);
+  for (const s of [-1, 1]) { const r = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 1.8, 22, 6), rebarMat); r.position.set(s * 7, 20, s * 4); r.rotation.z = s * 0.3; r.castShadow = true; g.add(r); }
+  g.position.set(clamp(x, -area.x, area.x), 360 + Math.random() * 80, clamp(z, area.z0, area.z1)); g.rotation.y = Math.random() * 3;
+  g.userData = { vy: 0, landed: false }; scene.add(g); blocks.push(g);
+}
+function crumb(x, y, z) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(6, 6, 6), concMat); m.position.set(x, y, z);
+  m.userData = { vx: (Math.random() - 0.5) * 160, vy: 90 + Math.random() * 140, vz: (Math.random() - 0.5) * 160, life: 1.2 }; scene.add(m); crumbs.push(m);
+}
+
+// ---------- 動き ----------
+const clamp = function (v, a, b) { return Math.max(a, Math.min(b, v)); };
+const pick = function (a) { return a[Math.floor(Math.random() * a.length)]; };
+const st = { mode: 'idle', until: 1.5, tx: 0, tz: 0, target: null, heading: 0, jaw: 0.15, hop: 0, hopV: 0, blink: 0, nextBlink: 2, walkT: 0, nextTalk: 4 };
+const bubble = document.getElementById('bubble'); let bubbleUntil = 0;
+function say(text, sec) { bubble.textContent = text; bubble.style.opacity = 1; bubbleUntil = now + (sec || 3.2); }
+function poke() { st.hopV = 260; say(pick(POKE_LINES)); st.mode = 'idle'; st.until = now + 1.6; st.faceCam = true; }
+function goto(x, z, target) { st.mode = 'walk'; st.tx = clamp(x, -area.x, area.x); st.tz = clamp(z, area.z0, area.z1); st.target = target || null; st.faceCam = false; }
+function nearestBlock() {
+  let best = null, bd = 1e9;
+  for (const b of blocks) { if (!b.userData.landed) continue; const d = Math.hypot(b.position.x - kiku.position.x, b.position.z - kiku.position.z); if (d < bd) { bd = d; best = b; } }
+  return best;
+}
+let now = 0, last = performance.now();
+function step(dt) {
+  // コンクリートが落ちる
+  for (const b of blocks) { const u = b.userData; if (u.landed) continue; u.vy -= 900 * dt; b.position.y += u.vy * dt;
+    if (b.position.y <= 13) { b.position.y = 13; if (Math.abs(u.vy) > 120) { u.vy = -u.vy * 0.35; } else { u.landed = true; } } }
+  for (let i = crumbs.length - 1; i >= 0; i--) { const c = crumbs[i], u = c.userData; u.vy -= 700 * dt; c.position.x += u.vx * dt; c.position.y = Math.max(3, c.position.y + u.vy * dt); c.position.z += u.vz * dt;
+    c.rotation.x += dt * 6; u.life -= dt; c.scale.setScalar(Math.max(0.01, u.life)); if (u.life <= 0) { scene.remove(c); crumbs.splice(i, 1); } }
+
+  let walking = false, wantJaw = 0.12 + Math.sin(now * 2.2) * 0.05;
+  if (st.mode === 'idle') {
+    const b = nearestBlock();
+    if (b && now > st.until - 0.8) goto(b.position.x, b.position.z, b);
+    else if (now > st.until) goto((Math.random() * 2 - 1) * area.x, area.z0 + Math.random() * (area.z1 - area.z0));
+    if (now > st.nextTalk && now > bubbleUntil) { say(pick(LINES), 3.6); st.nextTalk = now + 9 + Math.random() * 8; st.faceCam = true; }
+    if (now < bubbleUntil) wantJaw = 0.25 + Math.abs(Math.sin(now * 11)) * 0.35;      // 話しているあいだ、口をぱくぱく
+  } else if (st.mode === 'walk') {
+    if (st.target && blocks.indexOf(st.target) === -1) st.target = null;
+    if (st.target) { st.tx = st.target.position.x; st.tz = st.target.position.z; }
+    const dx = st.tx - kiku.position.x, dz = st.tz - kiku.position.z, d = Math.hypot(dx, dz), stop = st.target ? R + 26 : 6;
+    if (d <= stop) {
+      if (st.target) { st.mode = 'eat'; st.until = now + 1.7; say(EAT_LINES[0], 1.4); }
+      else { st.mode = 'idle'; st.until = now + 1.2 + Math.random() * 2.2; st.faceCam = Math.random() < 0.6; }
+    } else {
+      walking = true; st.heading = Math.atan2(dx, dz);
+      const v = 95 * dt; kiku.position.x += dx / d * Math.min(v, d); kiku.position.z += dz / d * Math.min(v, d);
+      if (st.target) wantJaw = 0.5 + Math.sin(now * 9) * 0.25;                        // 食べに行くときは、口を開けて
+    }
+  } else if (st.mode === 'eat') {
+    const b = st.target, k = 1 - (st.until - now) / 1.7;
+    wantJaw = 0.2 + Math.abs(Math.sin(now * 13)) * 0.75;
+    if (b) {
+      const mx = kiku.position.x + Math.sin(st.heading) * R * 0.7, mz = kiku.position.z + Math.cos(st.heading) * R * 0.7;
+      b.position.x += (mx - b.position.x) * 0.2; b.position.z += (mz - b.position.z) * 0.2; b.position.y += (BODY_Y - b.position.y) * 0.2;
+      b.scale.setScalar(Math.max(0.02, 1 - k)); b.rotation.y += dt * 8;
+      if (Math.random() < dt * 22) crumb(mx, BODY_Y, mz);
+    }
+    if (now > st.until) {
+      if (b) { scene.remove(b); blocks.splice(blocks.indexOf(b), 1); }
+      st.target = null; st.mode = 'idle'; st.until = now + 2.2; st.faceCam = true; st.hopV = 180; say(pick(EAT_LINES.slice(1)), 2.6);
+    }
+  }
+  // 向き（話すとき・食べ終わったときは、こちらを向く）
+  const wantH = (st.mode === 'idle' && st.faceCam) ? 0 : st.heading;
+  let dh = wantH - kiku.rotation.y; while (dh > Math.PI) dh -= Math.PI * 2; while (dh < -Math.PI) dh += Math.PI * 2;
+  kiku.rotation.y += dh * Math.min(1, dt * 7);
+  // はねる・よちよち歩く
+  st.hopV -= 900 * dt; st.hop = Math.max(0, st.hop + st.hopV * dt); if (st.hop === 0 && st.hopV < 0) st.hopV = 0;
+  if (walking) st.walkT += dt * 11;
+  const sw = walking ? Math.sin(st.walkT) : 0;
+  body.position.y = BODY_Y + st.hop + (walking ? Math.abs(sw) * 7 : Math.sin(now * 2.2) * 1.5);
+  body.rotation.z = sw * 0.13; body.rotation.x = walking ? 0.06 : 0;
+  feet[0].position.y = 8 + st.hop * 0.5 + (walking ? Math.max(0, sw) * 13 : 0); feet[1].position.y = 8 + st.hop * 0.5 + (walking ? Math.max(0, -sw) * 13 : 0);
+  feet[0].position.z = 6 + (walking ? Math.cos(st.walkT) * 7 : 0); feet[1].position.z = 6 - (walking ? Math.cos(st.walkT) * 7 : 0);
+  // 口
+  st.jaw += (wantJaw - st.jaw) * Math.min(1, dt * 16);
+  up.hinge.rotation.x = -st.jaw * 0.62; low.hinge.rotation.x = st.jaw * 0.3;
+  // まばたき
+  if (now > st.nextBlink) { st.blink = 0.14; st.nextBlink = now + 2 + Math.random() * 3.5; }
+  st.blink = Math.max(0, st.blink - dt);
+  for (const e of eyes) { const s = st.blink > 0 ? 0.12 : 1; e.ball.scale.y = s; e.pu.scale.y = s; e.gl.visible = s === 1; }
+  // ときどき、勝手にコンクリートが落ちてくる
+  if (now > nextDrop) { if (blocks.length < (KANBAN ? 3 : 2)) addBlock((Math.random() * 2 - 1) * area.x, area.z0 + Math.random() * (area.z1 - area.z0)); nextDrop = now + (KANBAN ? 7 : 11) + Math.random() * 8; }
+  // 吹き出し
+  if (now > bubbleUntil) bubble.style.opacity = 0;
+  const p = new THREE.Vector3(kiku.position.x, body.position.y + R + 34, kiku.position.z).project(camera);
+  const bw = bubble.offsetWidth / 2 + 8; bubble.style.left = clamp((p.x * 0.5 + 0.5) * W, bw, Math.max(bw, W - bw)) + 'px'; bubble.style.top = Math.max(70, (-p.y * 0.5 + 0.5) * H) + 'px';
+}
+let nextDrop = 2.5;
+function resize() {
+  W = window.innerWidth; H = window.innerHeight; renderer.setSize(W, H, false);
+  const asp = W / H; camera.aspect = asp;
+  const tall = asp < 0.85;                       // スマホの縦持ち：近くから、せまい範囲で
+  camera.fov = tall ? 50 : 38; camera.position.set(0, tall ? 300 : 230, tall ? 500 : 430); camera.lookAt(0, tall ? 60 : 50, 0);
+  area = tall ? { x: 80, z0: -150, z1: 110 } : { x: Math.min(300, 150 * asp), z0: -150, z1: 150 };
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize); resize();
+function loop(t) {
+  const dt = Math.min(0.05, (t - last) / 1000); last = t; now += dt;
+  step(dt); renderer.render(scene, camera); requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+window.__room = { st: st, kiku: kiku, blocks: blocks, stepFor: function (sec) { for (let i = 0; i < sec * 60; i++) { now += 1 / 60; step(1 / 60); } renderer.render(scene, camera); } };
+
+// ---------- 押したとき ----------
+const ray = new THREE.Raycaster(), v2 = new THREE.Vector2();
+renderer.domElement.addEventListener('pointerdown', function (ev) {
+  v2.set(ev.clientX / W * 2 - 1, -(ev.clientY / H) * 2 + 1); ray.setFromCamera(v2, camera);
+  if (ray.intersectObjects(meshes).length) { poke(); return; }
+  const hit = ray.intersectObject(floor)[0];
+  if (hit) addBlock(hit.point.x, hit.point.z);
+});
+document.getElementById('bFeed').addEventListener('click', function () { addBlock((Math.random() * 2 - 1) * area.x, area.z0 + Math.random() * (area.z1 - area.z0)); });
+document.getElementById('bTalk').addEventListener('click', poke);
+setTimeout(function () { say('どうも！キクペディアです！', 3.5); }, 600);
+</script>
+</body></html>
