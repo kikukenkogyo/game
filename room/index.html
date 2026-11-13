@@ -26,6 +26,8 @@ canvas{display:block;width:100%;height:100%}
 #btns button:active,#btns a:active{transform:translateY(4px);box-shadow:0 2px 0 rgba(42,34,40,.3)}
 #hint{position:fixed;right:14px;top:14px;background:rgba(255,255,255,.9);border-radius:14px;padding:6px 12px;font-size:clamp(11px,2.8vw,16px)}
 .kanban #btns,.kanban #hint{display:none}
+/* 背の低い枠（菊建ページへの埋め込みなど）では、ボタンと文字を小さくして、キャラを大きく見せる */
+@media (max-height:430px){#btns{gap:6px;bottom:6px}#btns a{display:none}#btns button,#btns a{font-size:12px;padding:5px 11px;border-radius:13px;box-shadow:0 4px 0 rgba(42,34,40,.3)}#title{font-size:13px;padding:4px 12px;left:8px;top:6px;border-radius:13px}#hint{display:none}#bubble{font-size:14px;padding:6px 12px;border-width:3px;border-radius:16px}}
 #err{position:fixed;inset:0;display:none;align-items:center;justify-content:center;text-align:center;padding:30px;font-size:20px;color:#fff}
 </style></head>
 <body>
@@ -271,6 +273,10 @@ function resize() {
   const tall = asp < 0.85;                       // スマホの縦持ち：近くから、せまい範囲で
   camera.fov = tall ? 50 : 38; camera.position.set(0, tall ? 300 : 230, tall ? 500 : 430); camera.lookAt(0, tall ? 60 : 50, 0);
   area = tall ? { x: 80, z0: -150, z1: 110 } : { x: Math.min(300, 150 * asp), z0: -150, z1: 150 };
+  if (H < 430) {                                 // 背の低い枠（埋め込み）：ぐっと近づいて、せまい範囲を歩かせる
+    camera.fov = 30; camera.position.set(0, 150, 330); camera.lookAt(0, 52, 0);
+    area = { x: Math.min(190, 75 * asp), z0: -130, z1: 20 };
+  }
   camera.updateProjectionMatrix();
 }
 window.addEventListener('resize', resize); resize();
