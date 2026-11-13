@@ -1051,13 +1051,51 @@ function buildMachine3d(baseCol, darkCol, flagCol){
   const fore = new THREE.Group(); fore.position.x = 52; boom.add(fore);
   const foreArm = box(44, 9, 9, dotsMat); foreArm.position.x = 22; fore.add(foreArm);
   const crush = new THREE.Group(); crush.position.x = 44; fore.add(crush);
-  const crushBase = box(16, 18, 14, dark); crush.add(crushBase);
-  const jawU = new THREE.Group(); jawU.position.set(6, 4, 0); crush.add(jawU);
-  const jU = box(34, 6, 10, steelMat); jU.position.set(17, 3, 0); jawU.add(jU);
-  const jUt = box(8, 8, 8, darker); jUt.position.set(34, 0, 0); jawU.add(jUt);
-  const jawL = new THREE.Group(); jawL.position.set(6, -4, 0); crush.add(jawL);
-  const jL = box(34, 6, 10, steelMat); jL.position.set(17, -3, 0); jawL.add(jL);
-  const jLt = box(8, 8, 8, darker); jLt.position.set(34, 0, 0); jawL.add(jLt);
+  // ガブ（2026-11：ハサミの代わりに、丸い体の上半分＝上あご・下半分＝下あごが開いてかみつく。色は機体の水玉）
+  const crushBase = box(12, 14, 12, trimMat); crush.add(crushBase);
+  const GR = 26;                                           // ガブの半径
+  const mouthMat = new THREE.MeshLambertMaterial({ color: 0x4a0a22, side: THREE.DoubleSide });
+  const toothMat = new THREE.MeshLambertMaterial({ color: 0xfff8e8 });
+  const eyeMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  const pupilMat = new THREE.MeshLambertMaterial({ color: 0x120c10 });
+  const helmMat = new THREE.MeshLambertMaterial({ color: 0xffd21f });
+  const tongueMat = new THREE.MeshLambertMaterial({ color: 0xff5577 });
+  const half = function(top){
+    const g = new THREE.Group();
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(GR, 28, 14, 0, Math.PI * 2, top ? 0 : Math.PI / 2, Math.PI / 2), dotsMat);
+    dome.castShadow = true; g.add(dome);
+    const lid = new THREE.Mesh(new THREE.CircleGeometry(GR - 0.5, 28), mouthMat);   // 口の中の面
+    lid.rotation.x = Math.PI / 2; g.add(lid);
+    for(let k = 0; k < 7; k++){                            // 歯：前の半周に、口の中へ向けて並べる
+      const ph = (-1.25 + k * (2.5 / 6));
+      const big = (k % 2 ? 0.8 : 1.1);
+      const t = new THREE.Mesh(new THREE.ConeGeometry(3.4, 9 * big, 5), toothMat);
+      t.position.set(Math.cos(ph) * GR * 0.84, top ? -4 * big : 4 * big, Math.sin(ph) * GR * 0.84);
+      if(top) t.rotation.x = Math.PI;
+      g.add(t);
+    }
+    g.position.set(GR * 0.86, 0, 0);                       // ちょうつがい（後ろ寄り）から前へ
+    return g;
+  };
+  const jawU = new THREE.Group(); jawU.position.set(8, 1, 0); crush.add(jawU);
+  const upper = half(true); jawU.add(upper);
+  const jawL = new THREE.Group(); jawL.position.set(8, -1, 0); crush.add(jawL);
+  const lower = half(false); jawL.add(lower);
+  const tongue = new THREE.Mesh(new THREE.SphereGeometry(GR * 0.55, 16, 10), tongueMat);
+  tongue.scale.set(1.0, 0.22, 0.8); tongue.position.set(4, -2, 0); lower.add(tongue);
+  // 目（左右どちらから見ても、大きい目と小さい目が見えるように、両側に付ける）
+  for(const sz of [1, -1]){
+    for(const e of [{ x: 2, y: 15, z: 17, r: 8.2, px: -1.5 }, { x: 15, y: 16, z: 11, r: 6.0, px: 2.0 }]){
+      const ball = new THREE.Mesh(new THREE.SphereGeometry(e.r, 16, 12), eyeMat);
+      ball.position.set(e.x, e.y, e.z * sz); upper.add(ball);
+      const pu = new THREE.Mesh(new THREE.SphereGeometry(e.r * 0.46, 12, 10), pupilMat);
+      pu.position.set(e.x + e.px, e.y + 1, (e.z + e.r * 0.72) * sz); upper.add(pu);
+    }
+  }
+  // 黄色いヘルメット（ちょこんと、ななめに）
+  const helm = new THREE.Group(); helm.position.set(-7, GR - 3, 0); helm.rotation.z = 0.28; upper.add(helm);
+  const hd = new THREE.Mesh(new THREE.SphereGeometry(12, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2), helmMat); hd.scale.y = 0.8; helm.add(hd);
+  const hb = new THREE.Mesh(new THREE.CylinderGeometry(15, 15, 2.2, 22), new THREE.MeshLambertMaterial({ color: 0xf2b500 })); helm.add(hb);
   // 急降下の炎（メテオプレス）
   const flame = new THREE.Group(); flame.visible = false; root.add(flame);
   for(let i = 0; i < 3; i++){
@@ -1810,7 +1848,36 @@ function limb(x1,y1,x2,y2,w){
   const n=Math.floor(Math.hypot(x2-x1,y2-y1)/14);
   for(let i=1;i<n;i++){ const t=i/n; cx.beginPath(); cx.arc(x1+(x2-x1)*t,y1+(y2-y1)*t,2.6,0,7); cx.fill(); }
 }
+// ---------- ガブ（アームの先でかみつく。2026-11 酒井さん「対戦もガブに」）。色は機体の色（P1ピンク・P2青） ----------
 function drawCrusher(x,y,a,jaw){
+  cx.save(); cx.translate(x,y); cx.rotate(a); cx.scale(1.15,1.15);
+  const R=24, gx=22, gy=0, up=-(0.10+jaw*0.95), low=0.16+jaw*1.55, hx=gx-R*0.18;
+  const ux=gx+Math.cos(up)*R, uy=gy+Math.sin(up)*R, lx=gx+Math.cos(low)*R, ly=gy+Math.sin(low)*R;
+  cx.fillStyle=MCD; roundRect(-9,-7,18,14,5); cx.fill();                       // アームとのつなぎ
+  cx.fillStyle='#4a0a22'; cx.beginPath(); cx.arc(gx,gy,R-1.5,0,7); cx.fill();   // 口の中
+  cx.fillStyle='#ff5577'; cx.beginPath(); cx.ellipse(gx+6,gy+6+jaw*7,10,4+jaw*5,0.25,0,7); cx.fill();   // 舌
+  const body=function(){ cx.beginPath(); cx.moveTo(hx,gy); cx.lineTo(lx,ly); cx.arc(gx,gy,R,low,Math.PI*2+up); cx.closePath(); };
+  cx.save(); body(); cx.fillStyle=MC; cx.fill(); cx.clip(); dots(gx-R-3,gy-R-2,R*2+6,R*2+4,3.5); cx.restore();
+  cx.strokeStyle=MCD; cx.lineWidth=2; cx.lineJoin='round'; body(); cx.stroke();
+  const teeth=function(ex,ey,sign){                                             // 歯（口の中へ向かってとがる）
+    const vx=ex-hx, vy=ey-gy, len=Math.hypot(vx,vy)||1, dx=vx/len, dy=vy/len, nx=-dy*sign, ny=dx*sign;
+    cx.fillStyle='#fff8e8'; cx.strokeStyle='#c9bfa6'; cx.lineWidth=1;
+    for(let k=0;k<4;k++){ const t=0.34+k*0.19, bx=hx+vx*t, by=gy+vy*t, h=(k%2?6.5:8.5);
+      cx.beginPath(); cx.moveTo(bx-dx*3.6,by-dy*3.6); cx.lineTo(bx+dx*3.6,by+dy*3.6); cx.lineTo(bx+nx*h,by+ny*h); cx.closePath(); cx.fill(); cx.stroke(); }
+  };
+  teeth(ux,uy,1); teeth(lx,ly,-1);
+  cx.save(); cx.translate(gx-7,gy-R+3); cx.rotate(-0.28);                        // 黄色いヘルメット
+  cx.fillStyle='#ffd21f'; cx.beginPath(); cx.ellipse(0,0,11,8.5,0,Math.PI,0); cx.fill();
+  cx.strokeStyle='#d69a00'; cx.lineWidth=1.3; cx.beginPath(); cx.ellipse(0,0,11,8.5,0,Math.PI,0); cx.stroke();
+  cx.fillStyle='#f2b500'; roundRect(-14,-1.5,28,4.5,2.2); cx.fill(); cx.restore();
+  const eye=function(ex,ey,r,px,py,pr){                                         // 目（大きさも向きもちがう）
+    cx.fillStyle='#fff'; cx.strokeStyle='#d9c7cf'; cx.lineWidth=1; cx.beginPath(); cx.arc(ex,ey,r,0,7); cx.fill(); cx.stroke();
+    cx.fillStyle='#120c10'; cx.beginPath(); cx.arc(ex+px,ey+py,pr,0,7); cx.fill();
+    cx.fillStyle='#fff'; cx.beginPath(); cx.arc(ex+px+pr*0.35,ey+py-pr*0.4,pr*0.34,0,7); cx.fill(); };
+  eye(gx-6,gy-13,8.2,-2.5,-1.9,3.6); eye(gx+7,gy-16,6.2,1.3,2.0,2.9);
+  cx.restore();
+}
+function drawCrusherClassic(x,y,a,jaw){   // 前のハサミの絵（戻すときは、呼び先をこちらに）
   cx.save(); cx.translate(x,y); cx.rotate(a);
   cx.fillStyle='#4a4a54'; roundRect(-9,-12,24,24,6); cx.fill();
   cx.strokeStyle='#2c2c34'; cx.lineWidth=2; roundRect(-9,-12,24,24,6); cx.stroke();
