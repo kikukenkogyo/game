@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>菊建クラッシャー ～ピンクの水玉重機、参上！～</title>
+<title>菊建クラッシャー ～ピンクの水玉重機とガブ、参上！～</title>
 <style>
   html,body{margin:0;padding:0;background:#2a2138;height:100%;overflow:hidden;overscroll-behavior:none;}
   #wrap{display:flex;align-items:center;justify-content:center;height:100%;}
@@ -2710,8 +2710,100 @@ function drawExcavator(p){
   if(flash) cx.globalAlpha = 1;
   cx.restore();
 }
+// ---------- ガブ（アームの先でかみつく。2026-11 酒井さん「菊建ボットのキャラをゲームの主人公に」） ----------
+// ピンク水玉の丸い体・大きい口・とがった歯・左右ちがう目・小さい黄色ヘルメット。ハサミと同じ場所・同じ開き方（jaw）で動く
 function drawNibbler(x, y, a, jaw, S){
-  // ハサミ型クラッシャー（TS1100風大割機）
+  cx.save();
+  cx.translate(x, y);
+  cx.rotate(a);
+  cx.scale(S || 1, S || 1);
+  if(Math.cos(a) < 0) cx.scale(1, -1);          // 左向きでも逆さにならないように、上下を返す
+  cx.scale(1.28, 1.28);                         // 主役なので大きめに
+  const R = 31, gx = 30, gy = 0;                // 体の中心と半径（口は前向き。かみつく所は 46 あたり）
+  const up = -(0.10 + jaw * 0.95);              // 上あごの角度
+  const low = 0.16 + jaw * 1.55;                // 下あごの角度
+  const hx = gx - R * 0.18;                     // 口のちょうつがい
+  const ux = gx + Math.cos(up) * R, uy = gy + Math.sin(up) * R;
+  const lx = gx + Math.cos(low) * R, ly = gy + Math.sin(low) * R;
+
+  // アームとのつなぎ
+  cx.fillStyle = PINK_D;
+  roundRect(-12, -9, 24, 18, 6); cx.fill();
+  cx.fillStyle = '#3a3a42';
+  cx.beginPath(); cx.arc(-2, 0, 5.5, 0, 7); cx.fill();
+  cx.fillStyle = '#9a9aa2';
+  cx.beginPath(); cx.arc(-2, 0, 2.6, 0, 7); cx.fill();
+
+  // 口の中と舌
+  cx.fillStyle = '#4a0a22';
+  cx.beginPath(); cx.arc(gx, gy, R - 1.5, 0, 7); cx.fill();
+  cx.fillStyle = '#ff5577';
+  cx.beginPath(); cx.ellipse(gx + 8, gy + 8 + jaw * 9, 13, 5 + jaw * 6, 0.25, 0, 7); cx.fill();
+
+  // 体（口をあけた丸）と水玉
+  const body = function(){
+    cx.beginPath();
+    cx.moveTo(hx, gy);
+    cx.lineTo(lx, ly);
+    cx.arc(gx, gy, R, low, Math.PI * 2 + up);
+    cx.closePath();
+  };
+  cx.save();
+  body();
+  cx.fillStyle = PINK; cx.fill();
+  cx.clip();
+  dots(gx - R - 4, gy - R - 2, R * 2 + 8, R * 2 + 4, 4.4);
+  cx.restore();
+  cx.strokeStyle = PINK_D; cx.lineWidth = 2; cx.lineJoin = 'round';
+  body(); cx.stroke();
+
+  // 歯（上あご・下あご。口の中へ向かってとがる）
+  const teeth = function(ex, ey, sign){
+    const vx = ex - hx, vy = ey - gy, len = Math.hypot(vx, vy) || 1;
+    const dx = vx / len, dy = vy / len;
+    const nx = -dy * sign, ny = dx * sign;      // 口の中の向き
+    cx.fillStyle = '#fff8e8'; cx.strokeStyle = '#c9bfa6'; cx.lineWidth = 1;
+    for(let k = 0; k < 4; k++){
+      const t = 0.34 + k * 0.19;
+      const bx = hx + vx * t, by = gy + vy * t;
+      const h = (k % 2 ? 8.5 : 11) ;
+      cx.beginPath();
+      cx.moveTo(bx - dx * 4.6, by - dy * 4.6);
+      cx.lineTo(bx + dx * 4.6, by + dy * 4.6);
+      cx.lineTo(bx + nx * h, by + ny * h);
+      cx.closePath(); cx.fill(); cx.stroke();
+    }
+  };
+  teeth(ux, uy, 1);
+  teeth(lx, ly, -1);
+
+  // 黄色いヘルメット（ちょこんと、ななめに）
+  cx.save();
+  cx.translate(gx - 9, gy - R + 4);
+  cx.rotate(-0.28);
+  cx.fillStyle = '#ffd21f';
+  cx.beginPath(); cx.ellipse(0, 0, 14, 11, 0, Math.PI, 0); cx.fill();
+  cx.strokeStyle = '#d69a00'; cx.lineWidth = 1.5;
+  cx.beginPath(); cx.ellipse(0, 0, 14, 11, 0, Math.PI, 0); cx.stroke();
+  cx.fillStyle = '#f2b500';
+  roundRect(-18, -2, 36, 5.5, 2.7); cx.fill();
+  cx.restore();
+
+  // 目（大きさも向きもちがう）
+  const eye = function(ex, ey, r, px, py, pr){
+    cx.fillStyle = '#fff'; cx.strokeStyle = '#d9c7cf'; cx.lineWidth = 1;
+    cx.beginPath(); cx.arc(ex, ey, r, 0, 7); cx.fill(); cx.stroke();
+    cx.fillStyle = '#120c10';
+    cx.beginPath(); cx.arc(ex + px, ey + py, pr, 0, 7); cx.fill();
+    cx.fillStyle = '#fff';
+    cx.beginPath(); cx.arc(ex + px + pr * 0.35, ey + py - pr * 0.4, pr * 0.34, 0, 7); cx.fill();
+  };
+  eye(gx - 8, gy - 17, 10.5, -3.2, -2.4, 4.6);   // 大きい目は上うしろを見る
+  eye(gx + 9, gy - 21, 8, 1.6, 2.6, 3.7);        // 小さい目は口の先（えもの）を見る
+  cx.restore();
+}
+function drawNibblerClassic(x, y, a, jaw, S){
+  // ハサミ型クラッシャー（TS1100風大割機）。2026-11 からはガブ（drawNibbler）を使う。戻すときは drawExcavator の呼び先をこちらに
   cx.save();
   cx.translate(x, y);
   cx.rotate(a);
@@ -3729,14 +3821,14 @@ function drawTitle(){
   const lx = W/2 - 245;
   if(touchMode){
     cx.fillText('🚜  左下の ◀ ▶ … 走行（スピードに乗って体当たり！）　▲ … ジャンプ', lx, 276);
-    cx.fillText('🦷  画面をタッチ … 油圧圧砕機でガブガブ噛み壊す（押しっぱなしOK）', lx, 302);
-    cx.fillText('🐦  ステージ3からカラスがフン爆撃！圧砕機で追い払え', lx, 328);
+    cx.fillText('🦷  画面をタッチ … ガブがガブガブかみ壊す（押しっぱなしOK）', lx, 302);
+    cx.fillText('🐦  ステージ3からカラスがフン爆撃！ガブで追い払え', lx, 328);
     cx.fillText('💥  💗ボタン … 必殺ラブ＆クラッシュ→ハートビーム解放（必殺MAX）', lx, 354);
     cx.fillText('🔨  ⚒ボタン … 最終手段！オペレーター大ハンマー（漢気MAX）', lx, 380);
   }else{
     cx.fillText('🚜  A / D … 走行（スピードに乗って体当たり！）　W … ジャンプ', lx, 276);
-    cx.fillText('🦷  クリック長押し … 油圧圧砕機でガブガブ噛み壊す', lx, 302);
-    cx.fillText('🐦  ステージ3からカラスがフン爆撃！圧砕機で追い払え', lx, 328);
+    cx.fillText('🦷  クリック長押し … ガブがガブガブかみ壊す', lx, 302);
+    cx.fillText('🐦  ステージ3からカラスがフン爆撃！ガブで追い払え', lx, 328);
     cx.fillText('💥  スペース … 必殺ラブ＆クラッシュ→ハートビーム解放（必殺MAX）', lx, 354);
     cx.fillText('🔨  E … 最終手段！オペレーター降車→大ハンマー（漢気MAX）', lx, 380);
   }
