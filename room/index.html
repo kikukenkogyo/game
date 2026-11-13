@@ -23,11 +23,12 @@ canvas{display:block;width:100%;height:100%}
 #btns{position:fixed;left:0;right:0;bottom:max(12px,env(safe-area-inset-bottom));display:flex;gap:10px;justify-content:center;flex-wrap:wrap;padding:0 10px}
 #btns button,#btns a{font:inherit;font-weight:900;font-size:clamp(14px,3.6vw,22px);border:0;border-radius:18px;padding:11px 18px;background:#ffd21f;color:#2a2228;box-shadow:0 6px 0 rgba(42,34,40,.3);text-decoration:none;cursor:pointer}
 #btns a{background:#fff}
+#btns a.line{background:#06c755;color:#fff}   /* LINEのキクペディアを開く（2026-11-14） */
 #btns button:active,#btns a:active{transform:translateY(4px);box-shadow:0 2px 0 rgba(42,34,40,.3)}
 #hint{position:fixed;right:14px;top:14px;background:rgba(255,255,255,.9);border-radius:14px;padding:6px 12px;font-size:clamp(11px,2.8vw,16px)}
 .kanban #btns,.kanban #hint{display:none}
 /* 背の低い枠（菊建ページへの埋め込みなど）では、ボタンと文字を小さくして、キャラを大きく見せる */
-@media (max-height:430px){#btns{gap:6px;bottom:6px}#btns a{display:none}#btns button,#btns a{font-size:12px;padding:5px 11px;border-radius:13px;box-shadow:0 4px 0 rgba(42,34,40,.3)}#title{font-size:13px;padding:4px 12px;left:8px;top:6px;border-radius:13px}#hint{display:none}#bubble{font-size:14px;padding:6px 12px;border-width:3px;border-radius:16px}}
+@media (max-height:430px){#btns{gap:6px;bottom:6px}#btns a{display:none}#btns button,#btns a{font-size:12px;padding:5px 11px;border-radius:13px;box-shadow:0 4px 0 rgba(42,34,40,.3)}#btns a.line{display:block}#bTalk{display:none}#title{font-size:13px;padding:4px 12px;left:8px;top:6px;border-radius:13px}#hint{display:none}#bubble{font-size:14px;padding:6px 12px;border-width:3px;border-radius:16px}}
 #err{position:fixed;inset:0;display:none;align-items:center;justify-content:center;text-align:center;padding:30px;font-size:20px;color:#fff}
 </style></head>
 <body>
@@ -36,6 +37,7 @@ canvas{display:block;width:100%;height:100%}
 <div id="hint">押すと、反応します</div>
 <div id="bubble"></div>
 <div id="btns">
+  <a class="line" href="https://line.me/R/ti/p/%40556vgafp" target="_blank" rel="noopener">🎤 LINEで聞く</a>
   <button id="bFeed">🧱 コンクリートをあげる</button>
   <button id="bTalk">💬 話しかける</button>
   <a href="https://app.notion.com/p/b6f3c51f6fc68297aa850137011e46a6" target="_blank" rel="noopener">📖 菊建ページ</a>
