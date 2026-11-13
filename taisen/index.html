@@ -1407,7 +1407,7 @@ function limb(x1,y1,x2,y2,w){
   const n=Math.floor(Math.hypot(x2-x1,y2-y1)/14);
   for(let i=1;i<n;i++){ const t=i/n; cx.beginPath(); cx.arc(x1+(x2-x1)*t,y1+(y2-y1)*t,2.6,0,7); cx.fill(); }
 }
-// ---------- ガブ（アームの先でかみつく。2026-11 酒井さん「対戦もガブに」）。色は機体の色（P1ピンク・P2青） ----------
+// ---------- キクリン（前の名前はガブ。アームの先でかみつく。2026-11 酒井さん「対戦もこのキャラに」）。色は機体の色（P1ピンク・P2青） ----------
 function drawCrusher(x,y,a,jaw){
   cx.save(); cx.translate(x,y); cx.rotate(a); cx.scale(1.15,1.15);
   const R=24, gx=22, gy=0, up=-(0.10+jaw*0.95), low=0.16+jaw*1.55, hx=gx-R*0.18;

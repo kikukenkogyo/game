@@ -1051,9 +1051,9 @@ function buildMachine3d(baseCol, darkCol, flagCol){
   const fore = new THREE.Group(); fore.position.x = 52; boom.add(fore);
   const foreArm = box(44, 9, 9, dotsMat); foreArm.position.x = 22; fore.add(foreArm);
   const crush = new THREE.Group(); crush.position.x = 44; fore.add(crush);
-  // ガブ（2026-11：ハサミの代わりに、丸い体の上半分＝上あご・下半分＝下あごが開いてかみつく。色は機体の水玉）
+  // キクリン（前の名前はガブ。2026-11：ハサミの代わりに、丸い体の上半分＝上あご・下半分＝下あごが開いてかみつく。色は機体の水玉）
   const crushBase = box(12, 14, 12, trimMat); crush.add(crushBase);
-  const GR = 26;                                           // ガブの半径
+  const GR = 26;                                           // キクリンの半径
   const mouthMat = new THREE.MeshLambertMaterial({ color: 0x4a0a22, side: THREE.DoubleSide });
   const toothMat = new THREE.MeshLambertMaterial({ color: 0xfff8e8 });
   const eyeMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
@@ -1848,7 +1848,7 @@ function limb(x1,y1,x2,y2,w){
   const n=Math.floor(Math.hypot(x2-x1,y2-y1)/14);
   for(let i=1;i<n;i++){ const t=i/n; cx.beginPath(); cx.arc(x1+(x2-x1)*t,y1+(y2-y1)*t,2.6,0,7); cx.fill(); }
 }
-// ---------- ガブ（アームの先でかみつく。2026-11 酒井さん「対戦もガブに」）。色は機体の色（P1ピンク・P2青） ----------
+// ---------- キクリン（前の名前はガブ。アームの先でかみつく。2026-11 酒井さん「対戦もこのキャラに」）。色は機体の色（P1ピンク・P2青） ----------
 function drawCrusher(x,y,a,jaw){
   cx.save(); cx.translate(x,y); cx.rotate(a); cx.scale(1.15,1.15);
   const R=24, gx=22, gy=0, up=-(0.10+jaw*0.95), low=0.16+jaw*1.55, hx=gx-R*0.18;
