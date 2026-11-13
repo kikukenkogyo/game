@@ -9,6 +9,8 @@
   ・床を押すと、そこにコンクリートが落ちてくる
   ・?kanban=1 を付けると、ボタンを消した「映しっぱなし用」（事務所の電子黒板など）
   ・セリフは下の LINES / EAT_LINES / POKE_LINES に足すだけ。丁寧語＋「！」
+  ・キャラの形は Blender で作った物（model/room0〜2.glb＝口の開き3段。kikuken-line-bot の docs/chara3d/make_chara3d.py で
+    KIKU_SEGK=0.5 KIKU_GLB=出す場所 を付けて room0・room1・room2 を書き出す）。読み込めないときは、プログラムで組んだ簡単な形で動く
 -->
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -38,6 +40,8 @@ canvas{display:block;width:100%;height:100%}
 </div>
 <div id="err">この端末では、3Dを表示できませんでした。</div>
 <script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://unpkg.com/three@0.128.0/examples/js/environments/RoomEnvironment.js"></script>
 <script>
 'use strict';
 // ---------- セリフ（丁寧語＋「！」。足すときは1行足すだけ） ----------
@@ -55,7 +59,9 @@ let renderer, scene, camera;
 try { renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: true }); }
 catch (e) { document.getElementById('err').style.display = 'flex'; throw e; }
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-renderer.shadowMap.enabled = true;
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputEncoding = THREE.sRGBEncoding;
+const C = function (h) { return new THREE.Color(h).convertSRGBToLinear(); };   // 画面の色 → 光の計算用の色
 scene = new THREE.Scene(); scene.background = new THREE.Color(0xff4fa3);
 camera = new THREE.PerspectiveCamera(40, 1, 10, 4000);
 
@@ -64,29 +70,32 @@ function dotTex(bg, dot, size, r, rep) {
   const cv = document.createElement('canvas'); cv.width = cv.height = size; const g = cv.getContext('2d');
   g.fillStyle = bg; g.fillRect(0, 0, size, size); g.fillStyle = dot;
   for (const [x, y] of [[0.25, 0.25], [0.75, 0.75]]) { g.beginPath(); g.arc(x * size, y * size, r, 0, 7); g.fill(); }
-  const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rep[0], rep[1]); return t;
+  const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rep[0], rep[1]); t.encoding = THREE.sRGBEncoding; t.anisotropy = 8; return t;
 }
 const skinMat = new THREE.MeshLambertMaterial({ map: dotTex('#ff2e93', '#ffffff', 128, 20, [7, 3.5]) });
-const mouthMat = new THREE.MeshLambertMaterial({ color: 0x4a0a22, side: THREE.DoubleSide });
-const toothMat = new THREE.MeshLambertMaterial({ color: 0xfff8e8 });
+const mouthMat = new THREE.MeshLambertMaterial({ color: C(0x4a0a22), side: THREE.DoubleSide });
+const toothMat = new THREE.MeshLambertMaterial({ color: C(0xfff8e8) });
 const eyeMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
-const pupilMat = new THREE.MeshLambertMaterial({ color: 0x120c10 });
-const helmMat = new THREE.MeshLambertMaterial({ color: 0xffd21f });
-const tongueMat = new THREE.MeshLambertMaterial({ color: 0xff5577 });
-const footMat = new THREE.MeshLambertMaterial({ color: 0x2a2228 });
-const concMat = new THREE.MeshLambertMaterial({ color: 0x9a9a9a });
-const rebarMat = new THREE.MeshLambertMaterial({ color: 0x7a4a2a });
+const pupilMat = new THREE.MeshLambertMaterial({ color: C(0x120c10) });
+const helmMat = new THREE.MeshLambertMaterial({ color: C(0xffd21f) });
+const tongueMat = new THREE.MeshLambertMaterial({ color: C(0xff5577) });
+const footMat = new THREE.MeshLambertMaterial({ color: C(0x2a2228) });
+const concMat = new THREE.MeshStandardMaterial({ color: C(0x8a8a8a), roughness: 0.95, envMapIntensity: 0.4 });
+const rebarMat = new THREE.MeshStandardMaterial({ color: C(0x7a4a2a), roughness: 0.7 });
 
 // ---------- 部屋 ----------
-scene.add(new THREE.HemisphereLight(0xffffff, 0xffb8d8, 0.85));
-const sun = new THREE.DirectionalLight(0xffffff, 0.75); sun.position.set(-180, 420, 260); sun.castShadow = true;
-sun.shadow.mapSize.set(1024, 1024); sun.shadow.camera.left = -420; sun.shadow.camera.right = 420; sun.shadow.camera.top = 420; sun.shadow.camera.bottom = -420; sun.shadow.camera.far = 1200;
+scene.add(new THREE.HemisphereLight(0xffffff, 0xff9cc8, 0.28));
+const sun = new THREE.DirectionalLight(0xffffff, 0.8); sun.position.set(-180, 420, 260); sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048); sun.shadow.radius = 4; sun.shadow.bias = -0.0005; sun.shadow.camera.left = -420; sun.shadow.camera.right = 420; sun.shadow.camera.top = 420; sun.shadow.camera.bottom = -420; sun.shadow.camera.far = 1200;
 scene.add(sun);
-const floor = new THREE.Mesh(new THREE.PlaneGeometry(2400, 1400), new THREE.MeshLambertMaterial({ map: dotTex('#ffc9df', '#ff9dc6', 128, 18, [24, 14]) }));
-floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
-const wall = new THREE.Mesh(new THREE.PlaneGeometry(2400, 700), new THREE.MeshLambertMaterial({ map: dotTex('#ff4fa3', '#ffffff', 128, 17, [20, 6]) }));
+// 床と壁は、光に左右されない色（絵のままの色）。影だけを受ける透明な板を、床の上に重ねる
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(2400, 1400), new THREE.MeshBasicMaterial({ map: dotTex('#ffe3ef', '#ffc2dc', 128, 18, [24, 14]) }));
+floor.rotation.x = -Math.PI / 2; scene.add(floor);
+const shadowFloor = new THREE.Mesh(new THREE.PlaneGeometry(2400, 1400), new THREE.ShadowMaterial({ opacity: 0.2, color: 0x7a0040 }));
+shadowFloor.rotation.x = -Math.PI / 2; shadowFloor.position.y = 0.3; shadowFloor.receiveShadow = true; scene.add(shadowFloor);
+const wall = new THREE.Mesh(new THREE.PlaneGeometry(2400, 700), new THREE.MeshBasicMaterial({ map: dotTex('#ff4fa3', '#ffffff', 128, 17, [20, 6]) }));
 wall.position.set(0, 350, -260); scene.add(wall);
-const skirt = new THREE.Mesh(new THREE.BoxGeometry(2400, 26, 10), new THREE.MeshLambertMaterial({ color: 0x2a2228 })); skirt.position.set(0, 13, -255); scene.add(skirt);
+const skirt = new THREE.Mesh(new THREE.BoxGeometry(2400, 26, 10), new THREE.MeshBasicMaterial({ color: C(0x2a2228) })); skirt.position.set(0, 13, -255); scene.add(skirt);
 
 // ---------- キクペディア ----------
 const kiku = new THREE.Group(); scene.add(kiku);
@@ -117,10 +126,47 @@ for (const e of [{ x: -15, y: 22, z: 25, r: 13, px: -3, py: 1 }, { x: 14, y: 26,
 }
 const helm = new THREE.Group(); helm.position.set(-9, R - 5, -4); helm.rotation.z = 0.3; up.g.add(helm);
 const hd = add(helm, new THREE.SphereGeometry(17, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), helmMat); hd.scale.y = 0.82;
-add(helm, new THREE.CylinderGeometry(21, 21, 3, 24), new THREE.MeshLambertMaterial({ color: 0xf2b500 }));
-const feet = [-1, 1].map(function (s) { const f = add(kiku, new THREE.SphereGeometry(13, 14, 10), footMat); f.scale.set(1.0, 0.6, 1.5); f.position.set(s * R * 0.45, 8, 6); return f; });
-const BODY_Y = R + 9;
+add(helm, new THREE.CylinderGeometry(21, 21, 3, 24), new THREE.MeshLambertMaterial({ color: C(0xf2b500) }));
+let feet = [-1, 1].map(function (s) { const f = add(kiku, new THREE.SphereGeometry(13, 14, 10), footMat); f.scale.set(1.0, 0.6, 1.5); f.position.set(s * R * 0.45, 8, 6); return f; });
+let BODY_Y = R + 9, FOOT_Y = 8, FOOT_Z = 6;
 body.position.y = BODY_Y;
+
+// ---------- Blender で作った形に入れ替える（読み込めたら。だめなら上の簡単な形のまま動く） ----------
+const frames = [];                 // 口の開き3段（閉じぎみ・ふつう・大きく）
+(function () {
+  if (!THREE.GLTFLoader) return;
+  try { if (THREE.RoomEnvironment) scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new THREE.RoomEnvironment(), 0.04).texture; } catch (e) {}
+  const loader = new THREE.GLTFLoader(), got = []; let left = 3;
+  [0, 1, 2].forEach(function (i) {
+    loader.load('model/room' + i + '.glb', function (g) { got[i] = g.scene; if (--left === 0) useModels(got); }, undefined, function () { left = -99; });
+  });
+})();
+function useModels(got) {
+  const keepRot = kiku.rotation.y;
+  kiku.rotation.y = 0; body.rotation.set(0, 0, 0);
+  BODY_Y = R * 1.13; body.position.y = BODY_Y;                     // Blender の形は半径1。足の裏が床に付く高さ
+  got.forEach(function (m, i) {
+    m.scale.setScalar(R); body.add(m);
+    m.traverse(function (o) {
+      if (!o.isMesh) return;
+      if (/^Plane/.test(o.name)) { o.visible = false; return; }       // 影を受ける板は使わない
+      o.castShadow = true; meshes.push(o);
+      if (o.material && 'envMapIntensity' in o.material) o.material.envMapIntensity = 0.42;
+    });
+    m.visible = (i === 1); frames[i] = m;
+  });
+  kiku.updateMatrixWorld(true);
+  const newFeet = [];
+  got.forEach(function (m, i) { m.traverse(function (o) { if (/^foot/.test(o.name)) { if (i === 0) newFeet.push(o); else o.visible = false; } }); });
+  if (newFeet.length === 2) {                                      // 足は体から外して、歩くときに動かす
+    newFeet.sort(function (a, b) { return a.position.x - b.position.x; });
+    newFeet.forEach(function (f) { kiku.attach(f); });
+    feet.forEach(function (f) { f.visible = false; });
+    feet = newFeet; FOOT_Y = feet[0].position.y; FOOT_Z = feet[0].position.z;
+  }
+  up.hinge.visible = false; low.hinge.visible = false;
+  kiku.rotation.y = keepRot;
+}
 
 // ---------- コンクリート ----------
 const blocks = [], crumbs = [];
@@ -158,13 +204,13 @@ function step(dt) {
   for (let i = crumbs.length - 1; i >= 0; i--) { const c = crumbs[i], u = c.userData; u.vy -= 700 * dt; c.position.x += u.vx * dt; c.position.y = Math.max(3, c.position.y + u.vy * dt); c.position.z += u.vz * dt;
     c.rotation.x += dt * 6; u.life -= dt; c.scale.setScalar(Math.max(0.01, u.life)); if (u.life <= 0) { scene.remove(c); crumbs.splice(i, 1); } }
 
-  let walking = false, wantJaw = 0.12 + Math.sin(now * 2.2) * 0.05;
+  let walking = false, wantJaw = 0.2 + Math.sin(now * 2.2) * 0.04;
   if (st.mode === 'idle') {
     const b = nearestBlock();
     if (b && now > st.until - 0.8) goto(b.position.x, b.position.z, b);
     else if (now > st.until) goto((Math.random() * 2 - 1) * area.x, area.z0 + Math.random() * (area.z1 - area.z0));
     if (now > st.nextTalk && now > bubbleUntil) { say(pick(LINES), 3.6); st.nextTalk = now + 9 + Math.random() * 8; st.faceCam = true; }
-    if (now < bubbleUntil) wantJaw = 0.25 + Math.abs(Math.sin(now * 11)) * 0.35;      // 話しているあいだ、口をぱくぱく
+    if (now < bubbleUntil) wantJaw = Math.abs(Math.sin(now * 8)) * 0.72;      // 話しているあいだ、口をぱくぱく
   } else if (st.mode === 'walk') {
     if (st.target && blocks.indexOf(st.target) === -1) st.target = null;
     if (st.target) { st.tx = st.target.position.x; st.tz = st.target.position.z; }
@@ -179,7 +225,7 @@ function step(dt) {
     }
   } else if (st.mode === 'eat') {
     const b = st.target, k = 1 - (st.until - now) / 1.7;
-    wantJaw = 0.2 + Math.abs(Math.sin(now * 13)) * 0.75;
+    wantJaw = Math.abs(Math.sin(now * 10)) * 0.95;
     if (b) {
       const mx = kiku.position.x + Math.sin(st.heading) * R * 0.7, mz = kiku.position.z + Math.cos(st.heading) * R * 0.7;
       b.position.x += (mx - b.position.x) * 0.2; b.position.z += (mz - b.position.z) * 0.2; b.position.y += (BODY_Y - b.position.y) * 0.2;
@@ -201,11 +247,12 @@ function step(dt) {
   const sw = walking ? Math.sin(st.walkT) : 0;
   body.position.y = BODY_Y + st.hop + (walking ? Math.abs(sw) * 7 : Math.sin(now * 2.2) * 1.5);
   body.rotation.z = sw * 0.13; body.rotation.x = walking ? 0.06 : 0;
-  feet[0].position.y = 8 + st.hop * 0.5 + (walking ? Math.max(0, sw) * 13 : 0); feet[1].position.y = 8 + st.hop * 0.5 + (walking ? Math.max(0, -sw) * 13 : 0);
-  feet[0].position.z = 6 + (walking ? Math.cos(st.walkT) * 7 : 0); feet[1].position.z = 6 - (walking ? Math.cos(st.walkT) * 7 : 0);
+  feet[0].position.y = FOOT_Y + st.hop * 0.5 + (walking ? Math.max(0, sw) * 13 : 0); feet[1].position.y = FOOT_Y + st.hop * 0.5 + (walking ? Math.max(0, -sw) * 13 : 0);
+  feet[0].position.z = FOOT_Z + (walking ? Math.cos(st.walkT) * 7 : 0); feet[1].position.z = FOOT_Z - (walking ? Math.cos(st.walkT) * 7 : 0);
   // 口
   st.jaw += (wantJaw - st.jaw) * Math.min(1, dt * 16);
   up.hinge.rotation.x = -st.jaw * 0.62; low.hinge.rotation.x = st.jaw * 0.3;
+  if (frames.length === 3) { const f = st.jaw < 0.1 ? 0 : (st.jaw < 0.55 ? 1 : 2); for (let i = 0; i < 3; i++) frames[i].visible = (i === f); }
   // まばたき
   if (now > st.nextBlink) { st.blink = 0.14; st.nextBlink = now + 2 + Math.random() * 3.5; }
   st.blink = Math.max(0, st.blink - dt);
@@ -232,7 +279,7 @@ function loop(t) {
   step(dt); renderer.render(scene, camera); requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
-window.__room = { st: st, kiku: kiku, blocks: blocks, stepFor: function (sec) { for (let i = 0; i < sec * 60; i++) { now += 1 / 60; step(1 / 60); } renderer.render(scene, camera); } };
+window.__room = { st: st, kiku: kiku, blocks: blocks, frames: frames, stepFor: function (sec) { for (let i = 0; i < sec * 60; i++) { now += 1 / 60; step(1 / 60); } renderer.render(scene, camera); } };
 
 // ---------- 押したとき ----------
 const ray = new THREE.Raycaster(), v2 = new THREE.Vector2();
