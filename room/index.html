@@ -9,8 +9,14 @@
   ・床を押すと、そこにコンクリートが落ちてくる
   ・?kanban=1 を付けると、ボタンを消した「映しっぱなし用」（事務所の電子黒板など）
   ・セリフは下の LINES / EAT_LINES / POKE_LINES に足すだけ。丁寧語＋「！」
-  ・キャラの形は Blender で作った物（model/room0〜2.glb＝口の開き3段。kikuken-line-bot の docs/chara3d/make_chara3d.py で
-    KIKU_SEGK=0.5 KIKU_GLB=出す場所 を付けて room0・room1・room2 を書き出す）。読み込めないときは、プログラムで組んだ簡単な形で動く
+  ・キャラの形は Blender で作った物。2026-11-18 から、ほかのキクペディアと同じ「5番基準」の顔（まゆ毛なし・足なし・大きい目・大きく開けた口）に入れかえた
+    （酒井さん「イメージと違う。水玉が後ろがちょっと多すぎ。ほかのキクペディアと同じ感じに」）。背中の水玉は半分にしてある
+    model/k0・k1・k2.glb＝口の開き3段（k2＝いつもの顔）、kblink＝まばたき、knikori＝にっこり、kkira＝キラキラ。
+    作り方：kikuken-line-bot の docs/chara3d/make_chara3d.py で KIKU_SEGK=0.5 KIKU_GLB=出す場所 を付けて、名前の最後に _room を付けた顔
+    （k_kuchi0_room・k_kuchi1_room・k_base_room・k_mabataki_room・k_nikori_room・k_kira_room）を書き出す。読み込めないときは、プログラムで組んだ簡単な形で動く
+    前の形（足つき）は model/room0〜2.glb に残してある（今は使っていない）
+  ・前に作った動き（ハート目・ブチッ・溶断・ドジ消火器）を、押したとき・ときどき、その場で見せる（fx/名前.webp＝コマを並べた絵。作り方は tools/make_fx_sheets.py）
+    足すときは、tools/make_fx_sheets.py の ANIMS に足して動かし、下の FX に fx/fx.json の中身とセリフを書く
 -->
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -131,46 +137,68 @@ for (const e of [{ x: -15, y: 22, z: 25, r: 13, px: -3, py: 1 }, { x: 14, y: 26,
 const helm = new THREE.Group(); helm.position.set(-9, R - 5, -4); helm.rotation.z = 0.3; up.g.add(helm);
 const hd = add(helm, new THREE.SphereGeometry(17, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), helmMat); hd.scale.y = 0.82;
 add(helm, new THREE.CylinderGeometry(21, 21, 3, 24), new THREE.MeshLambertMaterial({ color: C(0xf2b500) }));
-let feet = [-1, 1].map(function (s) { const f = add(kiku, new THREE.SphereGeometry(13, 14, 10), footMat); f.scale.set(1.0, 0.6, 1.5); f.position.set(s * R * 0.45, 8, 6); return f; });
-let BODY_Y = R + 9, FOOT_Y = 8, FOOT_Z = 6;
+const BODY_Y = R + 1;              // 足なし。丸い体の下が、床に付く高さ
 body.position.y = BODY_Y;
 
 // ---------- Blender で作った形に入れ替える（読み込めたら。だめなら上の簡単な形のまま動く） ----------
-const frames = [];                 // 口の開き3段（閉じぎみ・ふつう・大きく）
+const models = {};                 // 名前 → 立体。k0・k1・k2＝口の開き3段（k2＝いつもの顔）／blink＝まばたき／nikori＝にっこり／kira＝キラキラ
+let modelsReady = false;
 (function () {
   if (!THREE.GLTFLoader) return;
   try { if (THREE.RoomEnvironment) scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new THREE.RoomEnvironment(), 0.04).texture; } catch (e) {}
-  const loader = new THREE.GLTFLoader(), got = []; let left = 3;
-  [0, 1, 2].forEach(function (i) {
-    loader.load('model/room' + i + '.glb', function (g) { got[i] = g.scene; if (--left === 0) useModels(got); }, undefined, function () { left = -99; });
-  });
-})();
-function useModels(got) {
-  const keepRot = kiku.rotation.y;
-  kiku.rotation.y = 0; body.rotation.set(0, 0, 0);
-  BODY_Y = R * 1.13; body.position.y = BODY_Y;                     // Blender の形は半径1。足の裏が床に付く高さ
-  got.forEach(function (m, i) {
-    m.scale.setScalar(R); body.add(m);
-    m.traverse(function (o) {
-      if (!o.isMesh) return;
-      if (/^Plane/.test(o.name)) { o.visible = false; return; }       // 影を受ける板は使わない
-      o.castShadow = true; meshes.push(o);
-      if (o.material && 'envMapIntensity' in o.material) o.material.envMapIntensity = 0.42;
-    });
-    m.visible = (i === 1); frames[i] = m;
-  });
-  kiku.updateMatrixWorld(true);
-  const newFeet = [];
-  got.forEach(function (m, i) { m.traverse(function (o) { if (/^foot/.test(o.name)) { if (i === 0) newFeet.push(o); else o.visible = false; } }); });
-  if (newFeet.length === 2) {                                      // 足は体から外して、歩くときに動かす
-    newFeet.sort(function (a, b) { return a.position.x - b.position.x; });
-    newFeet.forEach(function (f) { kiku.attach(f); });
-    feet.forEach(function (f) { f.visible = false; });
-    feet = newFeet; FOOT_Y = feet[0].position.y; FOOT_Z = feet[0].position.z;
+  const loader = new THREE.GLTFLoader();
+  function load(name, file, done) {
+    loader.load('model/' + file + '.glb?v=3', function (g) {
+      const m = g.scene; m.scale.setScalar(R); m.visible = false; body.add(m);      // Blender の形は半径1
+      m.traverse(function (o) {
+        if (!o.isMesh) return;
+        if (/^Plane/.test(o.name)) { o.visible = false; return; }       // 影を受ける板は使わない
+        o.castShadow = true; meshes.push(o);
+        if (o.material && 'envMapIntensity' in o.material) o.material.envMapIntensity = 0.42;
+      });
+      models[name] = m; if (done) done();
+    }, undefined, function () {});
   }
-  up.hinge.visible = false; low.hinge.visible = false;
-  kiku.rotation.y = keepRot;
+  let left = 3;
+  function first() {
+    if (--left) return;
+    modelsReady = true; up.hinge.visible = false; low.hinge.visible = false;       // 簡単な形は消す
+    load('blink', 'kblink'); load('nikori', 'knikori'); load('kira', 'kkira');     // 表情は、あとから読みこむ
+  }
+  load('k0', 'k0', first); load('k1', 'k1', first); load('k2', 'k2', first);
+})();
+
+// ---------- 前に作った動き（コマを並べた絵を、キャラの場所に重ねて見せる）----------
+// n＝コマの数、cols・rows＝並び、dur＝1コマの長さ（ミリ秒）、cx・cy・r＝絵の中の体の真ん中と半径（fx/fx.json の中身）、say＝セリフ
+const FX = {
+  heart: { n: 46, cols: 7, rows: 7, dur: [1070, 160, 160, 160, 160, 160, 160, 160, 660, 160, 160, 160, 160, 160, 160, 160, 160, 160, 160, 160, 160, 160, 160, 160, 160, 160, 160, 160, 160, 160, 160, 160, 160, 160, 160, 160, 160, 160, 160, 240, 320, 320, 320, 320, 160, 1160], cx: 0.5678, cy: 0.5172, r: 0.2299, say: 'ピンクの重機、大好きです！' },
+  buchi: { n: 20, cols: 5, rows: 4, dur: [996, 498, 166, 166, 166, 166, 166, 166, 83, 83, 83, 83, 83, 83, 83, 83, 83, 83, 83, 1328], cx: 0.4688, cy: 0.498, r: 0.168, say: 'たまには、怒ります！' },
+  yodan: { n: 18, cols: 5, rows: 4, dur: [664, 166, 166, 166, 166, 166, 166, 166, 166, 83, 83, 83, 83, 83, 83, 83, 83, 1328], cx: 0.2513, cy: 0.2674, r: 0.2086, say: '溶断は、得意技です！' },
+  doji: { n: 21, cols: 5, rows: 5, dur: [1160, 160, 160, 160, 160, 160, 80, 80, 80, 160, 80, 80, 80, 80, 240, 160, 160, 160, 160, 490, 1490], cx: 0.4758, cy: 0.4255, r: 0.1818, say: '消火器は、ちゃんと置いています！' }
+};
+const fxTex = {};
+const fxSprite = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false })); fxSprite.visible = false; fxSprite.renderOrder = 5; scene.add(fxSprite);
+const fxShadow = new THREE.Mesh(new THREE.CircleGeometry(R * 0.9, 28), new THREE.MeshBasicMaterial({ color: 0x7a0040, transparent: true, opacity: 0.2, depthWrite: false }));
+fxShadow.rotation.x = -Math.PI / 2; fxShadow.position.y = 0.5; fxShadow.visible = false; scene.add(fxShadow);
+function fxLoad(name) {
+  if (fxTex[name]) return; fxTex[name] = 1;
+  new THREE.TextureLoader().load('fx/' + name + '.webp?v=1', function (t) { t.encoding = THREE.sRGBEncoding; t.repeat.set(1 / FX[name].cols, 1 / FX[name].rows); fxTex[name] = t; }, undefined, function () {});
 }
+function fxReady() { return Object.keys(FX).filter(function (n) { return fxTex[n] && fxTex[n].isTexture; }); }
+function fxPlay(name) {
+  const t = fxTex[name], m = FX[name];
+  if (!t || !t.isTexture || st.fx || st.mode === 'eat') return false;
+  const lim = area.x * 0.35;                                           // 端にいるときは、真ん中あたりまで来てから見せる（絵が画面の外に切れないように）
+  if (Math.abs(kiku.position.x) > lim + 8 || kiku.position.z < area.z0 + 40) {
+    goto(clamp(kiku.position.x, -lim, lim), Math.max(kiku.position.z, area.z0 + 60)); st.pendingFx = name; return true;
+  }
+  st.pendingFx = null;
+  st.fx = { name: name, i: -1, t: 0, on: false }; st.mode = 'idle'; st.faceCam = true; st.until = now + 60; st.expr = null; st.hopV = 0;
+  fxSprite.material.map = t; fxSprite.material.needsUpdate = true; fxSprite.center.set(m.cx, 1 - m.cy);
+  const s = R / m.r; fxSprite.scale.set(s, s, 1);
+  return true;
+}
+setTimeout(function () { Object.keys(FX).forEach(fxLoad); }, 2500);     // 動きの絵は、少しあとから読みこむ
 
 // ---------- コンクリート ----------
 const blocks = [], crumbs = [];
@@ -190,10 +218,17 @@ function crumb(x, y, z) {
 // ---------- 動き ----------
 const clamp = function (v, a, b) { return Math.max(a, Math.min(b, v)); };
 const pick = function (a) { return a[Math.floor(Math.random() * a.length)]; };
-const st = { mode: 'idle', until: 1.5, tx: 0, tz: 0, target: null, heading: 0, jaw: 0.15, hop: 0, hopV: 0, blink: 0, nextBlink: 2, walkT: 0, nextTalk: 4 };
+const st = { mode: 'idle', until: 1.5, tx: 0, tz: 0, target: null, heading: 0, jaw: 0.15, hop: 0, hopV: 0, blink: 0, nextBlink: 2, walkT: 0, nextTalk: 4,
+  fx: null, nextFx: 22 + Math.random() * 15, expr: null, exprUntil: 0 };     // fx＝いま見せている動き、expr＝いまの表情（nikori・kira）
 const bubble = document.getElementById('bubble'); let bubbleUntil = 0;
 function say(text, sec) { bubble.textContent = text; bubble.style.opacity = 1; bubbleUntil = now + (sec || 3.2); }
-function poke() { st.hopV = 260; say(pick(POKE_LINES)); st.mode = 'idle'; st.until = now + 1.6; st.faceCam = true; }
+function poke() {
+  if (st.fx) return;                                                    // 動きの途中は、そのまま見せる
+  const ready = fxReady();
+  if (st.mode !== 'eat' && ready.length && Math.random() < 0.4 && fxPlay(pick(ready))) return;      // ときどき、前に作った動きを見せる
+  st.hopV = 260; say(pick(POKE_LINES)); st.mode = 'idle'; st.until = now + 1.6; st.faceCam = true;
+  st.expr = pick(['nikori', 'kira']); st.exprUntil = now + 1.6;         // 押されると、にっこり／キラキラ
+}
 function goto(x, z, target) { st.mode = 'walk'; st.tx = clamp(x, -area.x, area.x); st.tz = clamp(z, area.z0, area.z1); st.target = target || null; st.faceCam = false; }
 function nearestBlock() {
   let best = null, bd = 1e9;
@@ -208,28 +243,32 @@ function step(dt) {
   for (let i = crumbs.length - 1; i >= 0; i--) { const c = crumbs[i], u = c.userData; u.vy -= 700 * dt; c.position.x += u.vx * dt; c.position.y = Math.max(3, c.position.y + u.vy * dt); c.position.z += u.vz * dt;
     c.rotation.x += dt * 6; u.life -= dt; c.scale.setScalar(Math.max(0.01, u.life)); if (u.life <= 0) { scene.remove(c); crumbs.splice(i, 1); } }
 
-  let walking = false, wantJaw = 0.2 + Math.sin(now * 2.2) * 0.04;
-  if (st.mode === 'idle') {
+  let walking = false, wantJaw = 0.2 + Math.sin(now * 2.2) * 0.04, mouthMove = false;
+  if (st.fx) {
+    // 前に作った動きを見せているあいだは、その場で止まる（下で絵を進める）
+  } else if (st.mode === 'idle') {
     const b = nearestBlock();
     if (b && now > st.until - 0.8) goto(b.position.x, b.position.z, b);
     else if (now > st.until) goto((Math.random() * 2 - 1) * area.x, area.z0 + Math.random() * (area.z1 - area.z0));
     if (now > st.nextTalk && now > bubbleUntil) { say(pick(LINES), 3.6); st.nextTalk = now + 9 + Math.random() * 8; st.faceCam = true; }
-    if (now < bubbleUntil) wantJaw = Math.abs(Math.sin(now * 8)) * 0.72;      // 話しているあいだ、口をぱくぱく
+    if (now < bubbleUntil) { wantJaw = Math.abs(Math.sin(now * 8)) * 0.72; mouthMove = true; }      // 話しているあいだ、口をぱくぱく
+    else if (now > st.nextFx && !b) { const ready = fxReady(); if (ready.length) fxPlay(pick(ready)); st.nextFx = now + 40 + Math.random() * 30; }   // ときどき、勝手に動きを見せる
   } else if (st.mode === 'walk') {
     if (st.target && blocks.indexOf(st.target) === -1) st.target = null;
     if (st.target) { st.tx = st.target.position.x; st.tz = st.target.position.z; }
     const dx = st.tx - kiku.position.x, dz = st.tz - kiku.position.z, d = Math.hypot(dx, dz), stop = st.target ? R + 26 : 6;
     if (d <= stop) {
       if (st.target) { st.mode = 'eat'; st.until = now + 1.7; say(EAT_LINES[0], 1.4); }
-      else { st.mode = 'idle'; st.until = now + 1.2 + Math.random() * 2.2; st.faceCam = Math.random() < 0.6; }
+      else { st.mode = 'idle'; st.until = now + 1.2 + Math.random() * 2.2; st.faceCam = Math.random() < 0.6;
+        if (st.pendingFx) { const n = st.pendingFx; st.pendingFx = null; fxPlay(n); } }       // 真ん中まで来たら、動きを見せる
     } else {
       walking = true; st.heading = Math.atan2(dx, dz);
       const v = 95 * dt; kiku.position.x += dx / d * Math.min(v, d); kiku.position.z += dz / d * Math.min(v, d);
-      if (st.target) wantJaw = 0.5 + Math.sin(now * 9) * 0.25;                        // 食べに行くときは、口を開けて
+      if (st.target) wantJaw = 0.9;                                                  // 食べに行くときは、口を大きく開けて
     }
   } else if (st.mode === 'eat') {
     const b = st.target, k = 1 - (st.until - now) / 1.7;
-    wantJaw = Math.abs(Math.sin(now * 10)) * 0.95;
+    wantJaw = Math.abs(Math.sin(now * 10)) * 0.95; mouthMove = true;
     if (b) {
       const mx = kiku.position.x + Math.sin(st.heading) * R * 0.7, mz = kiku.position.z + Math.cos(st.heading) * R * 0.7;
       b.position.x += (mx - b.position.x) * 0.2; b.position.z += (mz - b.position.z) * 0.2; b.position.y += (BODY_Y - b.position.y) * 0.2;
@@ -245,22 +284,42 @@ function step(dt) {
   const wantH = (st.mode === 'idle' && st.faceCam) ? 0 : st.heading;
   let dh = wantH - kiku.rotation.y; while (dh > Math.PI) dh -= Math.PI * 2; while (dh < -Math.PI) dh += Math.PI * 2;
   kiku.rotation.y += dh * Math.min(1, dt * 7);
-  // はねる・よちよち歩く
+  // はねる・ぴょんぴょん進む（足なしなので、はねて進む）
   st.hopV -= 900 * dt; st.hop = Math.max(0, st.hop + st.hopV * dt); if (st.hop === 0 && st.hopV < 0) st.hopV = 0;
-  if (walking) st.walkT += dt * 11;
+  if (walking) st.walkT += dt * 9;
   const sw = walking ? Math.sin(st.walkT) : 0;
-  body.position.y = BODY_Y + st.hop + (walking ? Math.abs(sw) * 7 : Math.sin(now * 2.2) * 1.5);
-  body.rotation.z = sw * 0.13; body.rotation.x = walking ? 0.06 : 0;
-  feet[0].position.y = FOOT_Y + st.hop * 0.5 + (walking ? Math.max(0, sw) * 13 : 0); feet[1].position.y = FOOT_Y + st.hop * 0.5 + (walking ? Math.max(0, -sw) * 13 : 0);
-  feet[0].position.z = FOOT_Z + (walking ? Math.cos(st.walkT) * 7 : 0); feet[1].position.z = FOOT_Z - (walking ? Math.cos(st.walkT) * 7 : 0);
+  body.position.y = BODY_Y + st.hop + (walking ? Math.abs(sw) * 16 : (st.fx ? 0 : Math.sin(now * 2.2) * 1.5 + 1.5));
+  body.rotation.z = sw * 0.10; body.rotation.x = walking ? 0.10 : 0;
   // 口
   st.jaw += (wantJaw - st.jaw) * Math.min(1, dt * 16);
   up.hinge.rotation.x = -st.jaw * 0.62; low.hinge.rotation.x = st.jaw * 0.3;
-  if (frames.length === 3) { const f = st.jaw < 0.1 ? 0 : (st.jaw < 0.55 ? 1 : 2); for (let i = 0; i < 3; i++) frames[i].visible = (i === f); }
   // まばたき
   if (now > st.nextBlink) { st.blink = 0.14; st.nextBlink = now + 2 + Math.random() * 3.5; }
   st.blink = Math.max(0, st.blink - dt);
   for (const e of eyes) { const s = st.blink > 0 ? 0.12 : 1; e.ball.scale.y = s; e.pu.scale.y = s; e.gl.visible = s === 1; }
+  // 前に作った動き：こちらを向いたら、絵をキャラの場所に重ねて、コマを進める
+  if (st.fx) {
+    const f = st.fx, m = FX[f.name];
+    if (!f.on && Math.abs(kiku.rotation.y) < 0.12) { f.on = true; f.i = 0; f.t = 0; if (m.say) say(m.say, 3.4); }
+    if (f.on) {
+      f.t += dt * 1000;
+      while (f.i < m.n && f.t >= m.dur[f.i]) { f.t -= m.dur[f.i]; f.i++; }
+      if (f.i >= m.n) { st.fx = null; st.until = now + 1.2; st.nextTalk = Math.max(st.nextTalk, now + 5); }
+      else fxTex[f.name].offset.set((f.i % m.cols) / m.cols, 1 - (Math.floor(f.i / m.cols) + 1) / m.rows);
+    }
+  }
+  const fxOn = !!(st.fx && st.fx.on);
+  fxSprite.visible = fxOn; fxShadow.visible = fxOn;
+  if (fxOn) { fxSprite.position.set(kiku.position.x, body.position.y, kiku.position.z); fxShadow.position.x = kiku.position.x; fxShadow.position.z = kiku.position.z; }
+  // 顔（立体の入れかえ）：動きの絵を見せているあいだは立体を消す → 表情 → 口ぱく → まばたき → いつもの顔
+  if (modelsReady) {
+    let face = 'k2';
+    if (fxOn) face = '';
+    else if (st.expr && now < st.exprUntil && models[st.expr]) face = st.expr;
+    else if (mouthMove) face = st.jaw < 0.25 ? 'k0' : (st.jaw < 0.6 ? 'k1' : 'k2');
+    else if (st.blink > 0 && models.blink) face = 'blink';
+    for (const k in models) models[k].visible = (k === face);
+  }
   // ときどき、勝手にコンクリートが落ちてくる
   if (now > nextDrop) { if (blocks.length < (KANBAN ? 3 : 2)) addBlock((Math.random() * 2 - 1) * area.x, area.z0 + Math.random() * (area.z1 - area.z0)); nextDrop = now + (KANBAN ? 7 : 11) + Math.random() * 8; }
   // 吹き出し
@@ -287,7 +346,7 @@ function loop(t) {
   step(dt); renderer.render(scene, camera); requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
-window.__room = { st: st, kiku: kiku, blocks: blocks, frames: frames, stepFor: function (sec) { for (let i = 0; i < sec * 60; i++) { now += 1 / 60; step(1 / 60); } renderer.render(scene, camera); } };
+window.__room = { st: st, kiku: kiku, blocks: blocks, models: models, fxPlay: fxPlay, fxReady: fxReady, stepFor: function (sec) { for (let i = 0; i < sec * 60; i++) { now += 1 / 60; step(1 / 60); } renderer.render(scene, camera); } };
 
 // ---------- 押したとき ----------
 const ray = new THREE.Raycaster(), v2 = new THREE.Vector2();
